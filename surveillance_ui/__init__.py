@@ -241,7 +241,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._alert_player = _AlertPlayer( self._configuration )
         self._signals = _SurveillanceWindowSignals()
 
-        self.setWindowTitle("Koč Watch")
+        self.setWindowTitle("AI Surveillant")
         self.setMinimumSize( 500, 500 )
         self.showMaximized()
 
@@ -436,6 +436,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         return slider, percentage
 
 def _play_sound_file_blocking( file : str, sound_volume : float ):
+    if file == None:
+        return
     import pygame
     pygame.mixer.init()    
     pygame.mixer.music.load(file)

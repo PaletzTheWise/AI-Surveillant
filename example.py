@@ -17,7 +17,7 @@ if __name__ == '__main__':
         ],
         interests=[
             surveillance_ui.Interest(
-                id=0, # id used by the model, usually a COCO class ID
+                coco_class_id=0, # id used by the model, usually a COCO class ID
                 label="Person",
                 enabled_by_default=True,
                 sound_alert_path=None # Path to mp3 you want played for detections of the interest

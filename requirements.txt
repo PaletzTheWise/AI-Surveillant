@@ -1,5 +1,5 @@
 # Usage: pip install -r requirements.txt
-# torch is not listed here, get it from https://pytorch.org/. CUDA 11.8 and probably higher is supported but it requires a non-ancient NVidia GPU. AI-Surveillant will fallback to CPU if CUDA is not available but it's very slow.
+# torch is not listed here, get it from https://pytorch.org/. CUDA 11.8 and probably higher is supported but it requires a non-ancient NVidia GPU. AI-Surveillant will fall back to CPU if CUDA is not available but it's very slow.
 
 numpy>=1.18.5
 av>=13.0.0

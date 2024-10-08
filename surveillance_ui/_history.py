@@ -85,6 +85,8 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
         if not self.is_fresh_detection( detection ):
             return False
         
+        self._FOLDER.mkdir( exist_ok=True )
+
         pil_image = PIL.Image.fromarray(image, "RGB")
         pil_image.save( self._FOLDER / self.detection_info_to_filename( detection ) )
         self._append(detection)
@@ -123,15 +125,18 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
 
     def _enumerate_saved_detections(self) -> None:
         detections : list[_ObjectDetectionInfo] = []
-        for filename in os.listdir(self._FOLDER):
-            path = self._FOLDER / filename
-            if not os.path.isfile(path):
-                continue
-            detection = self.detection_info_from_file( filename )
-            if detection is None:
-                continue
+        try:
+            for filename in os.listdir(self._FOLDER):
+                path = self._FOLDER / filename
+                if not os.path.isfile(path):
+                    continue
+                detection = self.detection_info_from_file( filename )
+                if detection is None:
+                    continue
 
-            detections.append( detection )
+                detections.append( detection )
+        except FileNotFoundError:
+            pass # the folder does not exist yet so continue with no saved detections
         
         detections.sort( key = lambda x: x.when )
 
