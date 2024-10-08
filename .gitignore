@@ -1,0 +1,6 @@
+__pycache__
+/detections
+/yolov9
+/ignore_list.json
+/alert_sounds
+/.vscode
