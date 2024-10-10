@@ -1,8 +1,9 @@
 import numpy
 import threading
 import queue
-import av.container.input
 import typing
+import sys
+import av.container.input
 import PySide6.QtWidgets
 import PySide6.QtGui
 
@@ -27,23 +28,26 @@ class LastFrameVideoCapture:
         self._thread.start()
     
     def _frame_pulling_process(self):
-        input_container = self._input_container_constructor()
-
-        for frame in input_container.decode(video=0):
-            if self._shut_down_pending:
-                return
-
-            image = frame.to_ndarray(format="rgb24")
-            
-            if self._on_frame is not None:
-                self._on_frame(image)
-
+        while True:
             try:
-                self._frame_queue.get_nowait()
-            except queue.Empty as _:
-                pass
+                input_container = self._input_container_constructor()
+                for frame in input_container.decode(video=0):
+                    if self._shut_down_pending:
+                        return
 
-            self._frame_queue.put(image)
+                    image = frame.to_ndarray(format="rgb24")
+                    
+                    if self._on_frame is not None:
+                        self._on_frame(image)
+
+                    try:
+                        self._frame_queue.get_nowait()
+                    except queue.Empty as _:
+                        pass
+
+                    self._frame_queue.put(image)
+            except av.error.ExitError as e:
+                print( e, file=sys.stderr )
     
     def get_latest_frame(self, timeout=float) -> numpy.ndarray:
         """
