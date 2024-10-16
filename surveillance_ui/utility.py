@@ -46,8 +46,8 @@ class LastFrameVideoCapture:
                         pass
 
                     self._frame_queue.put(image)
-            except av.error.ExitError as e:
-                print( e, file=sys.stderr )
+            except av.FFmpegError as e:
+                print( f"Video capture exception: {e}", file=sys.stderr )
     
     def get_latest_frame(self, timeout=float) -> numpy.ndarray:
         """
