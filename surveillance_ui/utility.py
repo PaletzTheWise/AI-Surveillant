@@ -3,9 +3,14 @@ import threading
 import queue
 import typing
 import sys
+import dataclasses
+import datetime
+import traceback
+import functools
 import av.container.input
 import PySide6.QtWidgets
 import PySide6.QtGui
+import PySide6.QtCore
 
 class LastFrameVideoCapture:
     _input_container_constructor : typing.Callable[[],av.container.input.InputContainer]
@@ -14,7 +19,11 @@ class LastFrameVideoCapture:
     _on_frame : typing.Callable[[numpy.ndarray],None]
     _shut_down_pending : bool = False
 
-    def __init__(self, input_container_constructor : typing.Callable[[],av.container.input.InputContainer], on_frame : typing.Callable[[numpy.ndarray],None] | None = None):
+    def __init__(
+            self,
+            input_container_constructor : typing.Callable[[],av.container.input.InputContainer],
+            on_uncaught_exception : typing.Callable[[BaseException],None],
+            on_frame : typing.Callable[[numpy.ndarray],None] | None = None ):
         """
         Parameters:
             input_container_constructor - function that creates the video source
@@ -22,8 +31,16 @@ class LastFrameVideoCapture:
         """
         self._input_container_constructor = input_container_constructor
         self._on_frame = on_frame
+        self._on_uncaught_exception = on_uncaught_exception
         self._frame_queue = queue.Queue(1)
-        self._thread = threading.Thread(target=self._frame_pulling_process)
+        
+        def graceful_frame_pulling_process():
+            try:
+                self._frame_pulling_process()
+            except BaseException as e: # NOSONAR
+                on_uncaught_exception(e)
+        
+        self._thread = threading.Thread( target=graceful_frame_pulling_process )
         self._thread.daemon = True
         self._thread.start()
     
@@ -55,7 +72,7 @@ class LastFrameVideoCapture:
         Returns: frame as 24bit RGB ndarray
         """
         try:
-            return self._frame_queue.get(timeout=timeout) # TODO error handling NYI
+            return self._frame_queue.get(timeout=timeout)
         except queue.Empty:
             return None
     
@@ -71,17 +88,99 @@ class LastFrameVideoCapture:
 
         self._frame_queue.put(frame)
 
+@dataclasses.dataclass
+class _UncaughtExceptionInfo:
+    exception : BaseException
+    context : str
+
+class _ErrorHandlerSignals(PySide6.QtCore.QObject):
+    uncaught_exception = PySide6.QtCore.Signal( _UncaughtExceptionInfo )
+
+class ErrorHandler:
+
+    _application : PySide6.QtWidgets.QApplication
+    _last_exception_datetime : datetime
+    _signals : _ErrorHandlerSignals
+
+    def __init__(self, application : PySide6.QtWidgets.QApplication ):
+        self._last_exception_datetime = datetime.datetime.min
+        self._application = application
+        self._signals = _ErrorHandlerSignals()
+        self._signals.uncaught_exception.connect( self._on_uncaught_exception )
+
+    def handle_gracefully( self, handler : typing.Callable, context : str, *args, **kwargs ):
+        '''Handle an event "gracefully".
+
+        That is, catch and report any exception.
+
+        This can be used to create a decorator for handlers, assuming handlers can access ErrorHandler through self:
+        ```
+        def graceful_handler( handler ):
+            @functools.wraps( handler )
+                def wrapped_handler( self, *args, **kwargs ):
+                self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+            return wrapped_handler
+            
+        @graceful_handler
+        def on_whatever():
+            pass
+        ```
+
+        Parameters:
+            handler - event handler
+            context - error context if one occurs, e.g. "File update detection has crashed."
+            args, kwargs - event arguments to be passed to handler
+        '''
+        try:
+            handler( *args, **kwargs )
+        except BaseException as e: # NOSONAR
+            self.error( e, context )
+    
+    def error( self, exception : BaseException, context : str ):
+        self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(exception,  context) )
+    
+    @staticmethod
+    def log_error( exception : BaseException, context : str ):
+        with open("errors.txt", "a") as file:
+            file.write( f"{datetime.datetime.now()}\n\n{ErrorHandler._format_error_info(exception, context)}\n---\n\n" )
+
+    @staticmethod
+    def _format_error_info( exception : BaseException, context : str, limit : int | None = None ) -> str:
+        return f"{context}\n\n{'\n'.join(traceback.format_exception(exception, limit = limit ))}"
+    
+    def _on_uncaught_exception( self, uncaught_exception_info : _UncaughtExceptionInfo ) -> None:
+        ErrorHandler.log_error( uncaught_exception_info.exception, uncaught_exception_info.context )
+
+        if (datetime.datetime.now() - self._last_exception_datetime) > datetime.timedelta(seconds=30):
+            self._last_exception_datetime = datetime.datetime.now()
+            dialog = PySide6.QtWidgets.QMessageBox(self._application)
+            dialog.setWindowTitle("Error")
+            dialog.setIcon( PySide6.QtWidgets.QMessageBox.Icon.Critical )
+            dialog.setStandardButtons( PySide6.QtWidgets.QMessageBox.StandardButton.Ok )
+            dialog.setText( f"The application has encountered an unexpected error and may behave erratically going forward.\n\n {ErrorHandler._format_error_info( uncaught_exception_info.exception, uncaught_exception_info.context, 10 )}" )
+            dialog.exec()
+
 class FittingImage(PySide6.QtWidgets.QLabel):
     
-    def __init__(self, min_size_x : int, min_size_y : int):
+    _error_handler : ErrorHandler
+
+    def __init__(self, min_size_x : int, min_size_y : int, error_handler : ErrorHandler ):
         super().__init__()
+        self._error_handler = error_handler
         self.setScaledContents(True)
         self.setMinimumSize(min_size_x,min_size_y)
+
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : 'FittingImage', *args, **kwargs ):
+            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+        return wrapped_handler
 
     def setPixmap( self, pixmap : PySide6.QtGui.QPixmap ) -> None:
         super().setPixmap(pixmap)
         self._updateMargins()
     
+    @graceful_handler
     def resizeEvent( self, event : PySide6.QtGui.QResizeEvent ) -> None:
         super().resizeEvent( event )
         self._updateMargins()

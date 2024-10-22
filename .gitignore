@@ -4,3 +4,4 @@ __pycache__
 /ignore_list.json
 /alert_sounds
 /.vscode
+/errors.txt

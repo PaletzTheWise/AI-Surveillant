@@ -8,6 +8,7 @@ import queue
 import time
 import datetime
 import typing
+import functools
 from .common import (
     SupervisionDetections,
     CamDefinition,
@@ -23,6 +24,7 @@ from .common import (
 from .utility import (
     LastFrameVideoCapture,
     FittingImage,
+    ErrorHandler,
 )
 from ._history import (
     SurveillanceHistoryView
@@ -45,6 +47,7 @@ class _Detector():
     _filter_ignored : typing.Callable[[SupervisionDetections,CamDefinition,Point2D[int]],SupervisionDetections]
     _on_detection : typing.Callable[[_ImageDetectionsInfo],None] 
     _on_frame : typing.Callable[[_FrameInfo],None]
+    _on_uncaught_exception : typing.Callable[[BaseException,str],None]
     _shut_down_pending : bool = False
 
     _thread : threading.Thread
@@ -55,18 +58,26 @@ class _Detector():
             configuration : Configuration,
             filter_ignored : typing.Callable[[SupervisionDetections,CamDefinition,Point2D[int]],SupervisionDetections],
             on_detection : typing.Callable[[_ImageDetectionsInfo],None],
-            on_frame : typing.Callable[[_FrameInfo],None]
+            on_frame : typing.Callable[[_FrameInfo],None],
+            on_uncaught_exception : typing.Callable[[BaseException,str],None]
         ):
         super().__init__()
         self._configuration = configuration
         self._filter_ignored = filter_ignored
         self._on_detection = on_detection
         self._on_frame = on_frame
+        self._on_uncaught_exception = on_uncaught_exception
         self._model_update_queue = queue.Queue(1)
 
         self._last_frame_captures = [self._open_cam( cam_definition ) for cam_definition in self._configuration.cam_definitions]
 
-        self._thread = threading.Thread(target=self._detector_process)
+        def graceful_detector_process():
+            try:
+                self._detector_process()
+            except BaseException as e: # NOSONAR
+                on_uncaught_exception( e, "The detection thread has crashed." )
+
+        self._thread = threading.Thread( target=graceful_detector_process )
         self._thread.daemon = True
         self._thread.start()
 
@@ -98,7 +109,10 @@ class _Detector():
         def on_frame( frame : numpy.ndarray ):
             self._on_frame( _FrameInfo( image=frame, cam_id=cam_definition.id ) )
         
-        return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame )
+        def on_uncaught_cam_exception( exception : BaseException ):
+            self._on_uncaught_exception( exception, f"{cam_definition.label} cam thread has crashed." )
+        
+        return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame, on_uncaught_exception=on_uncaught_cam_exception )
 
     def _detector_process(self):
         import supervision
@@ -137,10 +151,15 @@ class _AlertPlayer:
     _shut_down_pending : bool = False
     _configuration : Configuration
 
-    def __init__(self, configuration : Configuration ):
+    def __init__(self, configuration : Configuration, on_uncaught_exception : typing.Callable[[BaseException],None] ):
         self._configuration = configuration
         self._sound_alert_queue = queue.Queue(1)
-        self._player_thread = threading.Thread(target=self._play_sound_proc)
+        def graceful_play_sound_process():
+            try:
+                self._play_sound_proc()
+            except BaseException as e: # NOSONAR
+                on_uncaught_exception(e)
+        self._player_thread = threading.Thread(target=graceful_play_sound_process)
         self._player_thread.daemon = True
         self._player_thread.start()
 
@@ -176,10 +195,24 @@ class _AlertPlayer:
 
 class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
 
+    _error_handler : ErrorHandler
+
+    def __init__( self, error_handler : ErrorHandler ):
+        self._error_handler = error_handler
+        super().__init__()
+    
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : 'QCamScrollArea', *args, **kwargs ):
+            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+        return wrapped_handler
+
+    @graceful_handler
     def resizeEvent( self, event ) -> None:
         super().resizeEvent( event )
         self.adjustCamSizes()
     
+    @graceful_handler
     def showEvent( self, event ) -> None:
         super().showEvent( event )
         self.adjustCamSizes()
@@ -225,6 +258,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     _multiview_live_view_widgets : list[FittingImage]
     _multiview_annotation_widgets : list[FittingImage]
 
+    _error_handler : ErrorHandler
+
     _signals : _SurveillanceWindowSignals # receives events from worker threads
     
     def __init__(self, configuration : Configuration ):
@@ -237,9 +272,14 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         super().__init__()
         
         self._configuration = configuration
-
-        self._alert_player = _AlertPlayer( self._configuration )
+        
         self._signals = _SurveillanceWindowSignals()
+
+        self._error_handler = ErrorHandler(self)
+
+        def on_uncaught_alert_player_exception( exception : BaseException ):
+            self._error_handler.error( exception, "Sound alert player thread has crashed." )
+        self._alert_player = _AlertPlayer( self._configuration, on_uncaught_alert_player_exception )
 
         self.setWindowTitle("AI Surveillant")
         self.setMinimumSize( 500, 500 )
@@ -254,7 +294,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         for interest in self._configuration.interests:
             check_box = PySide6.QtWidgets.QCheckBox(interest.label)
             check_box.setChecked( interest.enabled_by_default )
-            check_box.stateChanged.connect( self._on_configuration_change )
+            check_box.stateChanged.connect( lambda: self._on_configuration_change() )
             self._coco_check_boxes.append( check_box )
             controls_bar_layout.addWidget( check_box )
         
@@ -262,7 +302,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
 
         controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="👁 ") )
         self._sensitivity_slider, sensitivity_slider_percentage = self._make_percentage_slider( int( (1-configuration.initial_confidence) * 100) )
-        self._sensitivity_slider.valueChanged.connect( self._on_configuration_change )
+        self._sensitivity_slider.valueChanged.connect( lambda: self._on_configuration_change() )
         controls_bar_layout.addWidget( self._sensitivity_slider )
         controls_bar_layout.addWidget( sensitivity_slider_percentage )
         controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="👁👁👁") )
@@ -278,7 +318,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._cams_tab = PySide6.QtWidgets.QTabWidget()
         layout.addWidget( self._cams_tab )
 
-        self._multiview_scroll_area = QCamScrollArea()
+        self._multiview_scroll_area = QCamScrollArea( self._error_handler )
         self._multiview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff )
         self._multiview_scroll_area.setVerticalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn )
         self._multiview_scroll_area.setWidgetResizable(True)
@@ -288,9 +328,13 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             cam_index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition( cam_id ) )
             return PySide6.QtGui.QPixmap( self._live_view_widgets[cam_index].pixmap() )
 
-        self._ignore_list_view = IgnoreListView( self._configuration, get_cam_image )
+        self._ignore_list_view = IgnoreListView( self._configuration, self._error_handler, get_cam_image )
 
-        self._history_view = SurveillanceHistoryView( self._configuration, lambda ignore_point: self._ignore_list_view.append(ignore_point) )
+        self._history_view = SurveillanceHistoryView( 
+            self._configuration,
+            self._error_handler,
+            lambda ignore_point: self._ignore_list_view.append(ignore_point)
+        )
         self._cams_tab.addTab( self._history_view, " !,!,... " )
 
         multiview_scroll_subwidget = PySide6.QtWidgets.QWidget()
@@ -305,21 +349,21 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._multiview_annotation_widgets = []
         for index, cam_definition in enumerate( self._configuration.cam_definitions ):
 
-            live_view_widget = FittingImage( 50, 50 )
+            live_view_widget = FittingImage( 50, 50, self._error_handler  )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
      
-            self._annotation_widgets.append( FittingImage( 50, 50 ) )
+            self._annotation_widgets.append( FittingImage( 50, 50, self._error_handler  ) )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            multiview_cam_widget = FittingImage( 50, 50 )
+            multiview_cam_widget = FittingImage( 50, 50, self._error_handler  )
             self._multiview_live_view_widgets.append(multiview_cam_widget)
             row = math.floor(index / self._configuration.grid_column_count)
             column = index - (row*self._configuration.grid_column_count)
             multiview_layout.addWidget( multiview_cam_widget, row, column, 1, 1 )
 
             row += math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count ) # put annotations below live views
-            multiview_annotation_widget = FittingImage( 50, 50 )
+            multiview_annotation_widget = FittingImage( 50, 50 , self._error_handler )
             self._multiview_annotation_widgets.append(multiview_annotation_widget)
             multiview_layout.addWidget( multiview_annotation_widget, row, column, 1, 1 )
 
@@ -335,16 +379,24 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
 
         self.setCentralWidget(central_widget)
 
-        self._signals.detection.connect(self._on_detection)
-        self._signals.frame.connect(self._on_frame)
-
+        self._signals.detection.connect( self._on_detection )
+        self._signals.frame.connect( self._on_frame )
+        
         self._detector = _Detector( 
             configuration=self._configuration,
             filter_ignored=self._ignore_list_view.filter_ignored,
             on_detection=self._signals.detection.emit,
-            on_frame=self._signals.frame.emit
+            on_frame=self._signals.frame.emit,
+            on_uncaught_exception=self._error_handler.error,
         )
 
+
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : 'SurveillanceWindow', *args, **kwargs ):
+            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+        return wrapped_handler
+    
     def closeEvent( self, event: PySide6.QtGui.QCloseEvent ) -> None:
         shutdown_alert_thread = threading.Thread(target=self._alert_player.shut_down)
         shutdown_alert_thread.start()
@@ -355,6 +407,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
 
         super().closeEvent(event)
 
+    @graceful_handler
     def _on_configuration_change(self):
         self._detector.update_model( self._get_selected_coco_classes(), self._get_selected_confidence() )
     
@@ -370,8 +423,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         # the slider is 0-100 and inverse of confidence
         return (100 - self._sensitivity_slider.value()) / 100
 
+    @graceful_handler
     def _on_detection(self, image_detections_info : _ImageDetectionsInfo ) -> None:
-
         shape = image_detections_info.frame_info.image.shape
         frame_size = Point2D( shape[1], shape[0] )
         
@@ -394,6 +447,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._set_pixmap( self._annotation_widgets[index], pixmap )
         self._set_pixmap( self._multiview_annotation_widgets[index], pixmap )
     
+    @graceful_handler
     def _on_frame(self, frame_info : _FrameInfo ) -> None:
         for cam_definition, live_view_cam_widget, multiview_cam_widget in zip( self._configuration.cam_definitions, self._live_view_widgets, self._multiview_live_view_widgets ):
             if cam_definition.id == frame_info.cam_id:
@@ -457,7 +511,11 @@ def run_surveillance_application( configuration : Configuration ) -> int:
     
     Returns: Application exit code
     """
-    app = PySide6.QtWidgets.QApplication(sys.argv)
-    window = SurveillanceWindow( configuration )
-    window.show()
-    return app.exec()
+    try:
+        app = PySide6.QtWidgets.QApplication(sys.argv)
+        window = SurveillanceWindow( configuration )
+        window.show()
+        return app.exec()
+    except BaseException as e:
+        ErrorHandler.log_error(e, "The application has failed to start.")
+        raise

@@ -9,13 +9,12 @@ from .common import (
     CamDefinition,
     Point2D,
     _SvDetection,
-    _ObjectDetectionInfo,
-    _ImageDetectionsInfo,
     _IgnorePoint,
 ) 
 from .utility import (
     FittingImage,
     Synchronized,
+    ErrorHandler,
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
@@ -27,15 +26,20 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
     _PREVIEW_SIZE = Point2D( 640, 360 )
 
     _configuration : Configuration
+    _error_handler : ErrorHandler
     _get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap]
 
     _synchronized_ignore_list : Synchronized[list[_IgnorePoint]]
     _ignore_list_widget : PySide6.QtWidgets.QTreeWidget
     _ignore_item_display : FittingImage
 
-    def __init__(self, configuration : Configuration, get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap]):
+    def __init__( self,
+                  configuration : Configuration,
+                  error_handler : ErrorHandler,
+                  get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap] ):
         super().__init__()
         self._configuration = configuration
+        self._error_handler = error_handler
         self._get_cam_image = get_cam_image
 
         self._synchronized_ignore_list = Synchronized( list() )
@@ -49,15 +53,21 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         self._ignore_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
         ignore_list_layout.addWidget( self._ignore_list_widget )
         ignore_list_layout.setStretch( 0, 100)
-        self._ignore_item_display = FittingImage( 50, 50 )
+        self._ignore_item_display = FittingImage( 50, 50, self._error_handler )
         ignore_list_layout.addWidget( self._ignore_item_display )
         ignore_list_layout.setStretch( 1, 1)
-        self._ignore_list_widget.currentItemChanged.connect( self._on_current_item_change )
-        self._ignore_list_widget.model().rowsInserted.connect( self._adjust_list_view_width )       
-        self._ignore_list_widget.model().rowsRemoved.connect( self._adjust_list_view_width )
+        self._ignore_list_widget.currentItemChanged.connect( lambda: self._on_current_item_change() )
+        self._ignore_list_widget.model().rowsInserted.connect( lambda: self._adjust_list_view_width() )       
+        self._ignore_list_widget.model().rowsRemoved.connect( lambda: self._adjust_list_view_width() )
 
         for ignore_point in self._load_ignore_list():
             self._append_without_saving( ignore_point )
+
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : 'IgnoreListView', *args, **kwargs ):
+            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+        return wrapped_handler
 
     def append(self, ignore_point : _IgnorePoint ):
         self._append_without_saving(ignore_point)
@@ -129,6 +139,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         
         return False
 
+    @graceful_handler
     def _on_current_item_change(self) -> None:
         if self._ignore_list_widget.currentIndex() is None:
             self._ignore_item_display.clear()
@@ -155,6 +166,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
             painter.drawEllipse( at_screen_point, 5*scale, 5*scale )
         self._ignore_item_display.setPixmap( image )
     
+    @graceful_handler
     def _adjust_list_view_width(self):
         for i in range( 0, self._ignore_list_widget.columnCount()):
             self._ignore_list_widget.resizeColumnToContents(i)

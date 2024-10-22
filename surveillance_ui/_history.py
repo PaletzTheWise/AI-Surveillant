@@ -7,16 +7,17 @@ import re
 import pathlib
 import typing
 import statistics
+import functools
 from .common import (
     Configuration,
     Point2D,
     _SvDetection,
     _ObjectDetectionInfo,
-    _ImageDetectionsInfo,
     _IgnorePoint,
 ) 
 from .utility import (
     FittingImage,
+    ErrorHandler,
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
@@ -28,15 +29,20 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
     _FOLDER = pathlib.Path("detections/")
 
     _configuration : Configuration
+    _error_handler : ErrorHandler
     _add_to_ignore : typing.Callable[[_IgnorePoint],None]
 
     _detection_list : list[_ObjectDetectionInfo]
     _detection_list_widget : PySide6.QtWidgets.QTreeWidget
     _detection_display : FittingImage
 
-    def __init__(self, configuration : Configuration, add_to_ignore : typing.Callable[[_IgnorePoint],None]):
+    def __init__( self,
+                  configuration : Configuration,
+                  error_handler : ErrorHandler,
+                  add_to_ignore : typing.Callable[[_IgnorePoint],None] ):
         super().__init__()
         self._configuration = configuration
+        self._error_handler = error_handler
         self._add_to_ignore = add_to_ignore
 
         self._detection_list = []
@@ -50,13 +56,19 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
         self._detection_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
         detection_list_layout.addWidget( self._detection_list_widget )
         detection_list_layout.setStretch( 0, 100)
-        self._detection_display = FittingImage( 50, 50 )
+        self._detection_display = FittingImage( 50, 50, self._error_handler )
         detection_list_layout.addWidget( self._detection_display )
         detection_list_layout.setStretch( 1, 1)
-        self._detection_list_widget.currentItemChanged.connect( self._on_current_item_change )
-        self._detection_list_widget.model().rowsInserted.connect( self._adjust_list_view_width )       
-        self._detection_list_widget.model().rowsRemoved.connect( self._adjust_list_view_width )
+        self._detection_list_widget.currentItemChanged.connect( lambda: self._on_current_item_change() )
+        self._detection_list_widget.model().rowsInserted.connect( lambda: self._adjust_list_view_width() )       
+        self._detection_list_widget.model().rowsRemoved.connect( lambda: self._adjust_list_view_width() )
         self._enumerate_saved_detections()
+
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : 'SurveillanceHistoryView', *args, **kwargs ):
+            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+        return wrapped_handler
 
     def _append(self, detection : _ObjectDetectionInfo ):
         interest = self._configuration.get_interest( detection.supervision.coco_class_id )
@@ -109,6 +121,7 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
             path = self._FOLDER / self.detection_info_to_filename( detection )
             path.unlink()
  
+    @graceful_handler
     def _on_current_item_change(self) -> None:
         if self._detection_list_widget.currentIndex() is None:
             self._detection_display.clear()
@@ -143,6 +156,7 @@ class SurveillanceHistoryView(PySide6.QtWidgets.QFrame):
         for detection in detections:
             self._append( detection )
 
+    @graceful_handler
     def _adjust_list_view_width(self):
         for i in range( 0, self._detection_list_widget.columnCount()):
             self._detection_list_widget.resizeColumnToContents(i)
