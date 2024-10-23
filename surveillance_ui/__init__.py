@@ -91,7 +91,7 @@ class _Detector():
     
     def _open_cam( self, cam_definition : CamDefinition ) -> LastFrameVideoCapture:
         def input_container_constructor() -> av.container.InputContainer:
-            input_container = av.open(cam_definition.url, 'r', timeout=20.0)
+            input_container = av.open(cam_definition.url, 'r', timeout=5.0)
             input_container.streams.video[0].codec_context.low_delay = True
             return input_container
         

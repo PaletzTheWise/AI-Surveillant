@@ -30,6 +30,8 @@ class LastFrameVideoCapture:
     def _frame_pulling_process(self):
         while True:
             try:
+                if self._shut_down_pending:
+                    return                
                 input_container = self._input_container_constructor()
                 for frame in input_container.decode(video=0):
                     if self._shut_down_pending:
@@ -40,12 +42,7 @@ class LastFrameVideoCapture:
                     if self._on_frame is not None:
                         self._on_frame(image)
 
-                    try:
-                        self._frame_queue.get_nowait()
-                    except queue.Empty as _:
-                        pass
-
-                    self._frame_queue.put(image)
+                    self._update_latest_frame(image)
             except av.FFmpegError as e:
                 print( f"Video capture exception: {e}", file=sys.stderr )
     
@@ -65,6 +62,14 @@ class LastFrameVideoCapture:
     def shut_down(self) -> None:
         self._shut_down_pending = True
         self._thread.join()
+    
+    def _update_latest_frame(self, frame : numpy.ndarray ):
+        try:
+            self._frame_queue.get_nowait()
+        except queue.Empty as _:
+            pass
+
+        self._frame_queue.put(frame)
 
 class FittingImage(PySide6.QtWidgets.QLabel):
     
