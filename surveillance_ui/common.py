@@ -60,6 +60,7 @@ class Configuration:
     grid_column_count : int
     initial_confidence : float = 0.65
     minimum_detection_area : int = 1500
+    redetection_delay : datetime.timedelta = datetime.timedelta( seconds=15 )
 
     def get_cam_definition( self, cam_id : int ) -> CamDefinition:
         for cam_definition in self.cam_definitions:
@@ -92,11 +93,11 @@ class _SvDetection:
     def from_sv_detection( supervision_detection_values : list ) -> "_SvDetection":
         xyxy_coords, mask, confidence, coco_class_id, tracker_id, data = supervision_detection_values
         return _SvDetection(
-            xyxy_coords=xyxy_coords,
+            xyxy_coords=[float(value) for value in xyxy_coords],
             mask=mask,
-            confidence=confidence,
-            coco_class_id=coco_class_id,
-            tracker_id=tracker_id,
+            confidence=float(confidence),
+            coco_class_id=int(coco_class_id),
+            tracker_id=None if tracker_id is None else int(tracker_id),
             data=data
         )
     

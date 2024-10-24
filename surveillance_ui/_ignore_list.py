@@ -1,8 +1,6 @@
 import pathlib
 import pathlib
 import json
-import functools
-import typing
 from .common import (
     Configuration,
     SupervisionDetections,
@@ -12,90 +10,52 @@ from .common import (
     _IgnorePoint,
 ) 
 from .utility import (
-    FittingImage,
     Synchronized,
-    ErrorHandler,
+    EventDispatcher,
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
 import PySide6.QtCore
 
-class IgnoreListView(PySide6.QtWidgets.QFrame):
+class IgnoreList(PySide6.QtWidgets.QFrame):
     _IGNORE_FILE = pathlib.Path("ignore_list.json")
     _IGNORE_FILE_NEW = pathlib.Path("ignore_list.new.json")
-    _PREVIEW_SIZE = Point2D( 640, 360 )
 
     _configuration : Configuration
-    _error_handler : ErrorHandler
-    _get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap]
 
     _synchronized_ignore_list : Synchronized[list[_IgnorePoint]]
-    _ignore_list_widget : PySide6.QtWidgets.QTreeWidget
-    _ignore_item_display : FittingImage
+    _added_dispatcher : EventDispatcher[_IgnorePoint]
+    _removed_dispatcher : EventDispatcher[_IgnorePoint]
 
     def __init__( self,
-                  configuration : Configuration,
-                  error_handler : ErrorHandler,
-                  get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap] ):
+                  configuration : Configuration ):
         super().__init__()
         self._configuration = configuration
-        self._error_handler = error_handler
-        self._get_cam_image = get_cam_image
 
         self._synchronized_ignore_list = Synchronized( list() )
-        ignore_list_layout = PySide6.QtWidgets.QHBoxLayout()
-        self.setLayout(ignore_list_layout)
-        self._ignore_list_widget = PySide6.QtWidgets.QTreeWidget()
-        self._ignore_list_widget.setSizePolicy( PySide6.QtWidgets.QSizePolicy.Policy.Expanding, PySide6.QtWidgets.QSizePolicy.Policy.Expanding )
-        self._ignore_list_widget.setColumnCount( 4 )
-        self._ignore_list_widget.setHeaderHidden(  True )
-        self._ignore_list_widget.setSelectionMode( PySide6.QtWidgets.QListWidget.SelectionMode.SingleSelection )
-        self._ignore_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
-        ignore_list_layout.addWidget( self._ignore_list_widget )
-        ignore_list_layout.setStretch( 0, 100)
-        self._ignore_item_display = FittingImage( 50, 50, self._error_handler )
-        ignore_list_layout.addWidget( self._ignore_item_display )
-        ignore_list_layout.setStretch( 1, 1)
-        self._ignore_list_widget.currentItemChanged.connect( lambda: self._on_current_item_change() )
-        self._ignore_list_widget.model().rowsInserted.connect( lambda: self._adjust_list_view_width() )       
-        self._ignore_list_widget.model().rowsRemoved.connect( lambda: self._adjust_list_view_width() )
+        self._added_dispatcher = EventDispatcher()
+        self._removed_dispatcher = EventDispatcher()
 
-        for ignore_point in self._load_ignore_list():
-            self._append_without_saving( ignore_point )
+        with self._synchronized_ignore_list.lock() as ignore_list:
+            for ignore_point in self._load_ignore_list():
+                ignore_list.append( ignore_point )
 
-    def graceful_handler( handler ):
-        @functools.wraps( handler )
-        def wrapped_handler( self : 'IgnoreListView', *args, **kwargs ):
-            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
-        return wrapped_handler
-
-    def append(self, ignore_point : _IgnorePoint ):
-        self._append_without_saving(ignore_point)
-        self._save_ignore_list()
+    def get_ignore_points(self):
+        with self._synchronized_ignore_list.lock() as ignore_list:
+            return ignore_list.copy()
     
-    def _append_without_saving(self, ignore_point : _IgnorePoint ):
-        strings = [
-            self._configuration.get_cam_definition( ignore_point.cam_id ).label,
-            self._configuration.get_interest( ignore_point.coco_class_id ).label,
-            str( [ignore_point.at.x, ignore_point.at.y] )
-        ]
+    def add(self, ignore_point : _IgnorePoint ):
         with self._synchronized_ignore_list.lock() as ignore_list:
             ignore_list.append( ignore_point )
-        item = PySide6.QtWidgets.QTreeWidgetItem( None, strings )
-        self._ignore_list_widget.addTopLevelItem(item)
-
-        button = PySide6.QtWidgets.QPushButton(" ✖ ")
-        def remove():
-            with self._synchronized_ignore_list.lock() as ignore_list:
-                index = ignore_list.index( ignore_point )
-                del ignore_list[index]
-                self._ignore_list_widget.takeTopLevelItem( index )
-                self._save_ignore_list()
-        
-        button.pressed.connect( remove )
-        self._ignore_list_widget.setItemWidget(item, 3, button)
-
+        self._added_dispatcher.fire(ignore_point)
+        self._save_ignore_list()
     
+    def remove(self, ignore_point : _IgnorePoint ):
+        with self._synchronized_ignore_list.lock() as ignore_list:
+            ignore_list.remove( ignore_point )
+        self._removed_dispatcher.fire(ignore_point)
+        self._save_ignore_list()
+
     def filter_ignored( self, detections : SupervisionDetections, cam_definition : CamDefinition, frame_size : Point2D[int] ) -> SupervisionDetections:
         """
         Filter detections to remove ignored detections.
@@ -139,41 +99,6 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         
         return False
 
-    @graceful_handler
-    def _on_current_item_change(self) -> None:
-        if self._ignore_list_widget.currentIndex() is None:
-            self._ignore_item_display.clear()
-            return
-        
-        row = self._ignore_list_widget.currentIndex().row()
-        with self._synchronized_ignore_list.lock() as ignore_list:
-            item = ignore_list[row]
-        image = self._get_cam_image( item.cam_id )
-        if image.isNull():
-            image = PySide6.QtGui.QPixmap( self._PREVIEW_SIZE.x , self._PREVIEW_SIZE.y )
-            image.fill( PySide6.QtGui.QColorConstants.Gray )
-        with PySide6.QtGui.QPainter( image ) as painter:
-            scale = min( image.size().width(), image.size().height() ) / min( self._PREVIEW_SIZE.x, self._PREVIEW_SIZE.y )
-            scale = max( 1, scale )
-            def set_color(color):
-                painter.setPen( PySide6.QtGui.QPen( color, scale ) )    
-            at_screen_point = PySide6.QtCore.QPoint( int(item.at.x * image.size().width()), int(item.at.y * image.size().height()) )
-            set_color( PySide6.QtGui.QColorConstants.White )
-            painter.drawEllipse( at_screen_point, 3*scale, 3*scale )
-            set_color( PySide6.QtGui.QColorConstants.Red )
-            painter.drawEllipse( at_screen_point, 4*scale, 4*scale )
-            set_color( PySide6.QtGui.QColorConstants.White )
-            painter.drawEllipse( at_screen_point, 5*scale, 5*scale )
-        self._ignore_item_display.setPixmap( image )
-    
-    @graceful_handler
-    def _adjust_list_view_width(self):
-        for i in range( 0, self._ignore_list_widget.columnCount()):
-            self._ignore_list_widget.resizeColumnToContents(i)
-        
-        total_width = sum([self._ignore_list_widget.sizeHintForColumn(i) for i in range(0, self._ignore_list_widget.columnCount())])
-        self._ignore_list_widget.setMaximumWidth( total_width + 50)
-
     def _load_ignore_list(self) -> list[_IgnorePoint]:
         ignore_points : list[_IgnorePoint] = []
         try:
@@ -189,20 +114,6 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         except OSError:
             pass # just start with empty list
         
-        def cmp( x : _IgnorePoint, y : _IgnorePoint ) -> int:
-            values = [
-                x.cam_id - y.cam_id,
-                x.coco_class_id - y.coco_class_id,
-                x.at.y - y.at.y,
-                x.at.x - y.at.x
-            ]
-            for value in values:
-                if value != 0:
-                    return value
-            return 0
-        
-        ignore_points.sort( key = functools.cmp_to_key( cmp ) )
-
         return ignore_points
     
     def _ignore_point_to_dict( self, ignore_point : _IgnorePoint ) -> dict:

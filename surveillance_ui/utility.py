@@ -107,6 +107,7 @@ class ErrorHandler:
         self._application = application
         self._signals = _ErrorHandlerSignals()
         self._signals.uncaught_exception.connect( self._on_uncaught_exception )
+        sys.excepthook = self.excepthook
 
     def handle_gracefully( self, handler : typing.Callable, context : str, *args, **kwargs ):
         '''Handle an event "gracefully".
@@ -134,11 +135,17 @@ class ErrorHandler:
         try:
             handler( *args, **kwargs )
         except BaseException as e: # NOSONAR
-            self.error( e, context )
+            self.report_and_log_error( e, context )
     
-    def error( self, exception : BaseException, context : str ):
+    def report_and_log_error( self, exception : BaseException, context : str ):
         self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(exception,  context) )
     
+    @staticmethod
+    def excepthook(type, value, traceback):
+        ErrorHandler.log_error( value, "Uncaught exception." )
+        PySide6.QtCore.QCoreApplication.instance().exit(-1)
+        sys.__excepthook__(type,value,traceback)
+
     @staticmethod
     def log_error( exception : BaseException, context : str ):
         with open("errors.txt", "a") as file:
@@ -247,3 +254,18 @@ class LockContext(typing.Generic[_T]):
 
     def __exit__(self, type, value, traceback):
         return self._synchronized._lock.release()
+
+class EventDispatcher(typing.Generic[_T]):
+
+    _listeners : list[typing.Callable[[_T],None]]
+
+    def register( self, listener : typing.Callable[[_T],None] ) -> None:
+        self._listeners = list()
+        self._listeners.append( listener )
+
+    def forget( self, listener : typing.Callable[[_T],None] ) -> None:
+        self._listeners.remove( listener )
+
+    def fire( self, event : _T ) -> None:
+        for listener in self._listeners:
+            listener(event)

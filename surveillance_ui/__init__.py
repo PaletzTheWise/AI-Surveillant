@@ -27,9 +27,15 @@ from .utility import (
     ErrorHandler,
 )
 from ._history import (
-    SurveillanceHistoryView
+    DetectionHistory
+)
+from ._history_view import (
+    DetectionHistoryView
 )
 from ._ignore_list import (
+    IgnoreList
+)
+from ._ignore_list_view import (
     IgnoreListView
 )
 
@@ -241,6 +247,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     # components
     _alert_player : _AlertPlayer
     _detector : _Detector
+    _history : DetectionHistory
+    _ignore_list : IgnoreList
 
     # widgets
     _coco_check_boxes : list[PySide6.QtWidgets.QCheckBox]
@@ -251,8 +259,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     _annotation_widgets : list[FittingImage]
 
     _ignore_list_view : IgnoreListView
-
-    _history_view : SurveillanceHistoryView
+    _history_view : DetectionHistoryView
 
     _multiview_scroll_area : QCamScrollArea
     _multiview_live_view_widgets : list[FittingImage]
@@ -278,7 +285,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._error_handler = ErrorHandler(self)
 
         def on_uncaught_alert_player_exception( exception : BaseException ):
-            self._error_handler.error( exception, "Sound alert player thread has crashed." )
+            self._error_handler.report_and_log_error( exception, "Sound alert player thread has crashed." )
         self._alert_player = _AlertPlayer( self._configuration, on_uncaught_alert_player_exception )
 
         self.setWindowTitle("AI Surveillant")
@@ -328,12 +335,15 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             cam_index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition( cam_id ) )
             return PySide6.QtGui.QPixmap( self._live_view_widgets[cam_index].pixmap() )
 
-        self._ignore_list_view = IgnoreListView( self._configuration, self._error_handler, get_cam_image )
+        self._ignore_list = IgnoreList( self._configuration )
+        self._ignore_list_view = IgnoreListView( self._ignore_list, self._configuration, self._error_handler, get_cam_image )
 
-        self._history_view = SurveillanceHistoryView( 
-            self._configuration,
-            self._error_handler,
-            lambda ignore_point: self._ignore_list_view.append(ignore_point)
+        self._history = DetectionHistory( self._configuration )
+        self._history_view = DetectionHistoryView(
+            detection_history=self._history,
+            configuration=self._configuration,
+            error_handler=self._error_handler,
+            add_to_ignore=lambda ignore_point: self._ignore_list.add(ignore_point)
         )
         self._cams_tab.addTab( self._history_view, " !,!,... " )
 
@@ -384,10 +394,10 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         
         self._detector = _Detector( 
             configuration=self._configuration,
-            filter_ignored=self._ignore_list_view.filter_ignored,
+            filter_ignored=self._ignore_list.filter_ignored,
             on_detection=self._signals.detection.emit,
             on_frame=self._signals.frame.emit,
-            on_uncaught_exception=self._error_handler.error,
+            on_uncaught_exception=self._error_handler.report_and_log_error,
         )
 
 
@@ -431,7 +441,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         fresh_detections : list[_SvDetection] = []
         for detection in image_detections_info.detections:
             single_detection_info = _ObjectDetectionInfo( cam_id=image_detections_info.frame_info.cam_id, supervision=detection, when=image_detections_info.when, frame_size=frame_size )
-            if self._history_view.persist_if_fresh( single_detection_info, image=image_detections_info.frame_info.image ):
+            if self._history.is_fresh_detection( single_detection_info ):
+                self._history.add( single_detection_info, image=image_detections_info.frame_info.image ) 
                 fresh_detections.append(detection)
 
         if len(fresh_detections) > 0:
@@ -483,11 +494,13 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         percentage = PySide6.QtWidgets.QLabel(f"{initial_value} %")
         percentage.setMinimumSize(30,1)
         percentage.setAlignment( PySide6.QtCore.Qt.AlignmentFlag.AlignRight )
-        def update_percentage():
-            percentage.setText(f"{slider.value()} %")
-        slider.valueChanged.connect( update_percentage )
+        slider.valueChanged.connect( lambda: self._update_percentage( percentage, slider ) )
         
         return slider, percentage
+    
+    @graceful_handler
+    def _update_percentage(self, percentage : PySide6.QtWidgets.QLabel, slider : PySide6.QtWidgets.QSlider ) -> None:
+        percentage.setText(f"{slider.value()} %")
 
 def _play_sound_file_blocking( file : str, sound_volume : float ):
     if file == None:
