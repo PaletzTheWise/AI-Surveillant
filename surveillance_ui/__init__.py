@@ -9,6 +9,7 @@ import time
 import datetime
 import typing
 import functools
+import supervision
 from .common import (
     SupervisionDetections,
     CamDefinition,
@@ -121,7 +122,6 @@ class _Detector():
         return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame, on_uncaught_exception=on_uncaught_cam_exception )
 
     def _detector_process(self):
-        import supervision
         annotator = supervision.BoundingBoxAnnotator(thickness=5)
         
         default_interests = filter( lambda i: i.enabled_by_default, self._configuration.interests)
@@ -359,21 +359,21 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._multiview_annotation_widgets = []
         for index, cam_definition in enumerate( self._configuration.cam_definitions ):
 
-            live_view_widget = FittingImage( 50, 50, self._error_handler  )
+            live_view_widget = self._make_cam_image_widget(  "surveillance_ui/disconnected.png" )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
      
-            self._annotation_widgets.append( FittingImage( 50, 50, self._error_handler  ) )
+            self._annotation_widgets.append( self._make_cam_image_widget(  "surveillance_ui/empty.png" ) )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            multiview_cam_widget = FittingImage( 50, 50, self._error_handler  )
+            multiview_cam_widget = self._make_cam_image_widget(  "surveillance_ui/disconnected.png" )
             self._multiview_live_view_widgets.append(multiview_cam_widget)
             row = math.floor(index / self._configuration.grid_column_count)
             column = index - (row*self._configuration.grid_column_count)
             multiview_layout.addWidget( multiview_cam_widget, row, column, 1, 1 )
 
             row += math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count ) # put annotations below live views
-            multiview_annotation_widget = FittingImage( 50, 50 , self._error_handler )
+            multiview_annotation_widget = self._make_cam_image_widget(  "surveillance_ui/empty.png" )
             self._multiview_annotation_widgets.append(multiview_annotation_widget)
             multiview_layout.addWidget( multiview_annotation_widget, row, column, 1, 1 )
 
@@ -400,6 +400,10 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             on_uncaught_exception=self._error_handler.report_and_log_error,
         )
 
+    def _make_cam_image_widget(self, image_path ) -> FittingImage:
+        widget = FittingImage( 5*16, 5*9 , self._error_handler )
+        widget.setPixmap( PySide6.QtGui.QPixmap( image_path ) )
+        return widget
 
     def graceful_handler( handler ):
         @functools.wraps( handler )

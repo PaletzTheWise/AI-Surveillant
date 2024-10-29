@@ -4,6 +4,8 @@ import typing
 import surveillance_ui
 import os.path
 import enum
+import supervision
+import supervision.config
 
 # This code assumes YOLOv9 (https://github.com/WongKinYiu/yolov9) is cloned into the yolov9 subfolder.
 
@@ -51,8 +53,6 @@ class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
     
     def _yolov9_detections_to_sv(self, yolov9_results) -> surveillance_ui.SupervisionDetections:
         import torch
-        import supervision
-        from supervision.config import CLASS_NAME_DATA_FIELD
 
         xyxy, confidences, class_ids = [], [], []
 
@@ -71,7 +71,7 @@ class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
             xyxy=numpy.vstack(xyxy),
             confidence=numpy.array(confidences),
             class_id=numpy.array(class_ids),
-            data={CLASS_NAME_DATA_FIELD: class_names},
+            data={supervision.config.CLASS_NAME_DATA_FIELD: class_names},
         )
     
     def _ensure_yolov9_is_on_path(self):

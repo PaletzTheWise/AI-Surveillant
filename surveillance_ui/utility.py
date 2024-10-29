@@ -148,7 +148,7 @@ class ErrorHandler:
 
     @staticmethod
     def log_error( exception : BaseException, context : str ):
-        with open("errors.txt", "a") as file:
+        with open("errors.txt", "a", encoding="utf-8") as file:
             file.write( f"{datetime.datetime.now()}\n\n{ErrorHandler._format_error_info(exception, context)}\n---\n\n" )
 
     @staticmethod
@@ -194,7 +194,7 @@ class FittingImage(PySide6.QtWidgets.QLabel):
 
     def heightMatchingAspect(self) -> int:
         if not self._are_size_data_available():
-             return 1
+             return self.minimumSize().height()
 
         pixmap_aspect_ratio = self.pixmap().size().width() / self.pixmap().size().height()
         width = self.size().width()
