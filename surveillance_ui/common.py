@@ -61,6 +61,10 @@ class Configuration:
     initial_confidence : float = 0.65
     minimum_detection_area : int = 1500
     redetection_delay : datetime.timedelta = datetime.timedelta( seconds=15 )
+    camera_feed_timeout : datetime.timedelta = datetime.timedelta( seconds=3 )
+    disconnect_indicator_additional_delay : datetime.timedelta = datetime.timedelta( seconds=2 ) # additional to camera_feed_timeout
+    use_tcp_transport : bool = True
+    max_delay : datetime.timedelta = datetime.timedelta( seconds=3 )
 
     def get_cam_definition( self, cam_id : int ) -> CamDefinition:
         for cam_definition in self.cam_definitions:
@@ -73,6 +77,15 @@ class Configuration:
             if interest.coco_class_id == coco_class_id:
                 return interest
         raise ValueError("Unknown coco class ID.")
+    
+    def get_disconnect_indicator_delay(self) -> datetime.timedelta:
+        '''
+        Get disconnect indicator delay.
+
+        When camera feed times out, it may produce a partial frame. Disconnector indicator should thus not engage prior to that otherwise
+        the partial frame could refresh disconnect indicator logic and make the UI look hesitant.
+        '''
+        return self.camera_feed_timeout + self.disconnect_indicator_additional_delay
 
 @dataclasses.dataclass
 class _FrameInfo:

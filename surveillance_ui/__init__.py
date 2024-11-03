@@ -109,8 +109,16 @@ class _Detector():
     
     def _open_cam( self, cam_definition : CamDefinition ) -> LastFrameVideoCapture:
         def input_container_constructor() -> av.container.InputContainer:
-            input_container = av.open(cam_definition.url, 'r', timeout=5.0)
-            input_container.streams.video[0].codec_context.low_delay = True
+            input_container = av.open(
+                cam_definition.url,
+                'r',
+                timeout=self._configuration.camera_feed_timeout.total_seconds(),
+                options= {
+                    'rtsp_transport': 'tcp' if self._configuration.use_tcp_transport else 'udp',
+                    'stimeout' : str(self._configuration.camera_feed_timeout.total_seconds()*pow(10,6)),
+                    'max_delay': str(self._configuration.max_delay.total_seconds()*pow(10,6)),
+                }
+            )
             return input_container
         
         def on_frame( frame : numpy.ndarray ):
@@ -240,6 +248,85 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
             for item in row_items(row):
                 item.widget().setFixedHeight( ideal_height )
 
+class LiveViewWidget(PySide6.QtWidgets.QWidget):
+
+    _configuration : Configuration
+
+    _fitting_image : FittingImage
+    _overlay : PySide6.QtWidgets.QLabel
+    _overlay_image : PySide6.QtGui.QPixmap
+
+    _last_frame_time_monotonic : float
+    
+    def __init__( self, configuration : Configuration, fitting_image : FittingImage ):
+        super().__init__()
+
+        self._configuration = configuration
+        self._last_frame_time_monotonic = None
+        self._fitting_image = fitting_image
+
+        layout = PySide6.QtWidgets.QStackedLayout()
+        layout.setStackingMode( PySide6.QtWidgets.QStackedLayout.StackingMode.StackAll )
+        self.setLayout(layout)
+        layout.addWidget( self._fitting_image )
+        
+        self._overlay = PySide6.QtWidgets.QLabel()
+        self._overlay_image = PySide6.QtGui.QPixmap( "surveillance_ui/disconnected_icon.png" )
+        self._overlay.setSizePolicy( PySide6.QtWidgets.QSizePolicy.Policy.Fixed, PySide6.QtWidgets.QSizePolicy.Policy.Fixed )
+        self._overlay.setAlignment( PySide6.QtCore.Qt.AlignmentFlag.AlignCenter )
+        layout.addWidget( self._overlay )
+        self._overlay.raise_()
+        self.update_connection_status()
+    
+    def pixmap(self) -> PySide6.QtGui.QPixmap:
+        return self._fitting_image.pixmap()
+    
+    def setPixmap( self, pixmap : PySide6.QtGui.QPixmap ):
+        self._last_frame_time_monotonic = time.monotonic()
+        self._fitting_image.setPixmap( pixmap )
+        self.update_connection_status()
+
+    def heightMatchingAspect( self ) -> int:
+        return self._fitting_image.heightMatchingAspect()
+    
+    def update_connection_status( self ) -> None:
+        delay_seconds = self._configuration.get_disconnect_indicator_delay().total_seconds()
+        period_seconds = 2.0
+        hidden_ratio_seconds = 0.4 # ratio of period during which the indicator overlay should be hidden so the user can actually see the last frame unobstructed
+
+        if self._last_frame_time_monotonic is None :
+            self._set_overlay_opacity( 0 )
+            return
+        
+        time_since_frame_seconds = time.monotonic() - self._last_frame_time_monotonic
+        if time_since_frame_seconds < delay_seconds:
+            self._set_overlay_opacity( 0 )
+            return
+        
+        cycle = abs( (time_since_frame_seconds - delay_seconds) % period_seconds ) / period_seconds # this one goes only up from 0.0 to 1.0
+        cycle = (cycle + hidden_ratio_seconds/2) % 1.0 # skip the hidden ratio when going up (/2 because of the 2* below)
+        cycle = 2*cycle if cycle < 0.5 else 2*(1-cycle) # this one goes up and down
+        if cycle < hidden_ratio_seconds:
+            self._set_overlay_opacity( 0 )
+            return
+        
+        self._set_overlay_opacity( (cycle - hidden_ratio_seconds) * 1/(1-hidden_ratio_seconds) )
+
+    def _set_overlay_opacity( self, opacity : float ) -> None:
+        if opacity == 0:
+            self._overlay.hide()
+        else:
+            self._overlay.show()
+            transparenced_image = PySide6.QtGui.QPixmap( self._overlay_image.size() )
+            transparenced_image.fill( PySide6.QtCore.Qt.GlobalColor.transparent )
+            painter = PySide6.QtGui.QPainter()
+            painter.begin(transparenced_image)
+            painter.setOpacity( opacity )
+            painter.drawPixmap(0, 0, self._overlay_image)
+            painter.end()
+            self._overlay.setPixmap( transparenced_image )
+
+
 class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     
     _configuration : Configuration
@@ -255,14 +342,14 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     _sensitivity_slider : PySide6.QtWidgets.QSlider
     _sound_volume_slider : PySide6.QtWidgets.QSlider
     _cams_tab : PySide6.QtWidgets.QTabWidget
-    _live_view_widgets : list[FittingImage]
+    _live_view_widgets : list[LiveViewWidget]
     _annotation_widgets : list[FittingImage]
 
     _ignore_list_view : IgnoreListView
     _history_view : DetectionHistoryView
 
     _multiview_scroll_area : QCamScrollArea
-    _multiview_live_view_widgets : list[FittingImage]
+    _multiview_live_view_widgets : list[LiveViewWidget]
     _multiview_annotation_widgets : list[FittingImage]
 
     _error_handler : ErrorHandler
@@ -359,14 +446,14 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._multiview_annotation_widgets = []
         for index, cam_definition in enumerate( self._configuration.cam_definitions ):
 
-            live_view_widget = self._make_cam_image_widget(  "surveillance_ui/disconnected.png" )
+            live_view_widget = LiveViewWidget( self._configuration, self._make_cam_image_widget(  "surveillance_ui/disconnected.png" ) )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
      
             self._annotation_widgets.append( self._make_cam_image_widget(  "surveillance_ui/empty.png" ) )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            multiview_cam_widget = self._make_cam_image_widget(  "surveillance_ui/disconnected.png" )
+            multiview_cam_widget = LiveViewWidget( self._configuration, self._make_cam_image_widget(  "surveillance_ui/disconnected.png" ) )
             self._multiview_live_view_widgets.append(multiview_cam_widget)
             row = math.floor(index / self._configuration.grid_column_count)
             column = index - (row*self._configuration.grid_column_count)
@@ -399,6 +486,14 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             on_frame=self._signals.frame.emit,
             on_uncaught_exception=self._error_handler.report_and_log_error,
         )
+
+        timer = PySide6.QtCore.QTimer(self)
+        timer.timeout.connect( self._update_live_view_connection_status )
+        timer.start(10)
+
+    def _update_live_view_connection_status( self ):
+        for live_view_widget in self._live_view_widgets + self._multiview_live_view_widgets:
+            live_view_widget.update_connection_status()
 
     def _make_cam_image_widget(self, image_path ) -> FittingImage:
         widget = FittingImage( 5*16, 5*9 , self._error_handler )
@@ -474,7 +569,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         q_image = PySide6.QtGui.QImage( frame, frame.shape[1], frame.shape[0], frame.strides[0], PySide6.QtGui.QImage.Format.Format_RGB888)
         return PySide6.QtGui.QPixmap.fromImage(q_image)
     
-    def _set_pixmap(self, widget : FittingImage, pixmap : PySide6.QtGui.QPixmap ):
+    def _set_pixmap(self, widget : LiveViewWidget, pixmap : PySide6.QtGui.QPixmap ):
         previous = widget.pixmap()
         widget.setPixmap( pixmap )
         if previous is None or pixmap.size() != previous.size():

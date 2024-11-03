@@ -73,9 +73,19 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         return item_widget.user_ignore_point
     
     def _append(self, ignore_point : _IgnorePoint ) -> None:
+        try:
+            cam_label = self._configuration.get_cam_definition( ignore_point.cam_id ).label
+        except ValueError:
+            cam_label = "Unrecognized"
+        
+        try:
+            interest_label = self._configuration.get_interest( ignore_point.coco_class_id ).label
+        except ValueError:
+            interest_label = "Unrecognized"
+
         strings = [
-            self._configuration.get_cam_definition( ignore_point.cam_id ).label,
-            self._configuration.get_interest( ignore_point.coco_class_id ).label,
+            cam_label,
+            interest_label,
             str( [ignore_point.at.x, ignore_point.at.y] )
         ]
         item = PySide6.QtWidgets.QTreeWidgetItem( None, strings )
