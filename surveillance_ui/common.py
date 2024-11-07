@@ -93,6 +93,11 @@ class _FrameInfo:
     cam_id : int
 
 @dataclasses.dataclass
+class _AudioChunk:
+    chunk : bytes
+    cam_id : int
+
+@dataclasses.dataclass
 class _SvDetection:
     """Helper to access SV detection properties"""
     xyxy_coords : list[numpy.float32]

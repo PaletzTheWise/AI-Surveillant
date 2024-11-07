@@ -64,7 +64,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
     def graceful_handler( handler ):
         @functools.wraps( handler )
         def wrapped_handler( self : 'IgnoreListView', *args, **kwargs ):
-            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+            self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
         return wrapped_handler
 
     def _set_item_ignore_point( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem, ignore_point : _IgnorePoint ) -> None:

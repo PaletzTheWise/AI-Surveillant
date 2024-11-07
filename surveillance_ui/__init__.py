@@ -19,6 +19,7 @@ from .common import (
     Point2D,
     _SvDetection,
     _FrameInfo,
+    _AudioChunk,
     _ImageDetectionsInfo,
     _ObjectDetectionInfo,
 )
@@ -26,6 +27,8 @@ from .utility import (
     LastFrameVideoCapture,
     FittingImage,
     ErrorHandler,
+    AudioStreamPlayer,
+    make_percentage_slider,
 )
 from ._history import (
     DetectionHistory
@@ -39,10 +42,14 @@ from ._ignore_list import (
 from ._ignore_list_view import (
     IgnoreListView
 )
+from ._live_view import (
+    LiveView
+)
 
 import PySide6.QtCore
 import PySide6.QtWidgets
 import PySide6.QtGui
+import PySide6.QtMultimedia
 
 class _SurveillanceWindowSignals(PySide6.QtCore.QObject):
     frame = PySide6.QtCore.Signal( _FrameInfo )
@@ -54,6 +61,7 @@ class _Detector():
     _filter_ignored : typing.Callable[[SupervisionDetections,CamDefinition,Point2D[int]],SupervisionDetections]
     _on_detection : typing.Callable[[_ImageDetectionsInfo],None] 
     _on_frame : typing.Callable[[_FrameInfo],None]
+    _on_audio_chunk : typing.Callable[[_AudioChunk],None]    
     _on_uncaught_exception : typing.Callable[[BaseException,str],None]
     _shut_down_pending : bool = False
 
@@ -66,6 +74,7 @@ class _Detector():
             filter_ignored : typing.Callable[[SupervisionDetections,CamDefinition,Point2D[int]],SupervisionDetections],
             on_detection : typing.Callable[[_ImageDetectionsInfo],None],
             on_frame : typing.Callable[[_FrameInfo],None],
+            on_audio_chunk : typing.Callable[[_AudioChunk],None] | None,            
             on_uncaught_exception : typing.Callable[[BaseException,str],None]
         ):
         super().__init__()
@@ -73,6 +82,7 @@ class _Detector():
         self._filter_ignored = filter_ignored
         self._on_detection = on_detection
         self._on_frame = on_frame
+        self._on_audio_chunk = on_audio_chunk
         self._on_uncaught_exception = on_uncaught_exception
         self._model_update_queue = queue.Queue(1)
 
@@ -124,10 +134,13 @@ class _Detector():
         def on_frame( frame : numpy.ndarray ):
             self._on_frame( _FrameInfo( image=frame, cam_id=cam_definition.id ) )
         
+        def on_audio_bytes( audio_bytes : bytes ):
+            self._on_audio_chunk( _AudioChunk( chunk=audio_bytes, cam_id=cam_definition.id ) )
+
         def on_uncaught_cam_exception( exception : BaseException ):
             self._on_uncaught_exception( exception, f"{cam_definition.label} cam thread has crashed." )
         
-        return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame, on_uncaught_exception=on_uncaught_cam_exception )
+        return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame, on_audio_bytes=on_audio_bytes, on_uncaught_exception=on_uncaught_cam_exception )
 
     def _detector_process(self):
         annotator = supervision.BoundingBoxAnnotator(thickness=5)
@@ -160,52 +173,82 @@ class _Detector():
                     self._on_detection( _ImageDetectionsInfo(frame_info, sv_detections, datetime.datetime.now() ) )
 
 class _AlertPlayer:
-    _sound_alert_queue : queue.Queue[tuple[_ImageDetectionsInfo,float]]
-    _player_thread : threading.Thread
-    _shut_down_pending : bool = False
     _configuration : Configuration
+    _error_handler : ErrorHandler
+    _sound_path_to_media_player : dict[str,PySide6.QtMultimedia.QMediaPlayer]
+    _audio_outputs : list[PySide6.QtMultimedia.QAudioOutput]
+    _sound_queue : list[list[PySide6.QtMultimedia.QMediaPlayer]]
+    _ready_to_play : bool
 
-    def __init__(self, configuration : Configuration, on_uncaught_exception : typing.Callable[[BaseException],None] ):
+    def __init__(self, configuration : Configuration, error_handler : ErrorHandler ):
         self._configuration = configuration
-        self._sound_alert_queue = queue.Queue(1)
-        def graceful_play_sound_process():
-            try:
-                self._play_sound_proc()
-            except BaseException as e: # NOSONAR
-                on_uncaught_exception(e)
-        self._player_thread = threading.Thread(target=graceful_play_sound_process)
-        self._player_thread.daemon = True
-        self._player_thread.start()
+        self._error_handler = error_handler
 
-    def _play_sound_proc(self):
-        import pygame # pre-load pygame library
-        while True:
-            if self._shut_down_pending:
-                return
+        self._ready_to_play = True
+        self._sound_queue = []
+        self._sound_path_to_media_player = dict()
+        self._audio_outputs = []
 
-            try:
-                image_detections_info, sound_volume = self._sound_alert_queue.get(timeout=0.01)
-            except queue.Empty:
-                continue
+    def graceful_handler( handler ):
+        @functools.wraps( handler )
+        def wrapped_handler( self : '_AlertPlayer', *args, **kwargs ):
+            self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
+        return wrapped_handler
 
-            for detection in image_detections_info.detections[:5]:
-                interest = self._configuration.get_interest( detection.coco_class_id  )
-                _play_sound_file_blocking(interest.sound_alert_path, sound_volume)
-            cam_definition = self._configuration.get_cam_definition( image_detections_info.frame_info.cam_id )
-            _play_sound_file_blocking(cam_definition.sound_alert_path, sound_volume)
-            time.sleep(0.5)
-    
-    def try_fire(self, image_detections_info : _ImageDetectionsInfo, sound_volume : float ):
-        if sound_volume <= 0.001:
+    def try_alert(self, image_detections_info : _ImageDetectionsInfo ):     
+        sounds = []
+        for detection in image_detections_info.detections[:5]:
+            interest = self._configuration.get_interest( detection.coco_class_id  )
+            if interest.sound_alert_path is not None:
+                sounds.append( self.get_sound( interest.sound_alert_path ) )
+        cam_definition = self._configuration.get_cam_definition( image_detections_info.frame_info.cam_id )
+        if cam_definition.sound_alert_path is not None:
+            sounds.append( self.get_sound( cam_definition.sound_alert_path ) )
+        
+        if len(sounds) == 0:
             return
-        try:
-            self._sound_alert_queue.put_nowait( [image_detections_info, sound_volume] )
-        except queue.Full:
-            pass
+        
+        self._sound_queue.append( sounds )
+
+        self._try_play_next_sound()
     
+    def set_volume(self, volume : float) -> None:
+        for media_player in self._sound_path_to_media_player.values():
+            media_player.audioOutput().setVolume(volume)
+
     def shut_down(self) -> None:
-        self._shut_down_pending = True
-        self._player_thread.join()
+        for media_player in self._sound_path_to_media_player.values():
+            media_player.stop()
+    
+    @graceful_handler
+    def _on_media_status_change(self, status : PySide6.QtMultimedia.QMediaPlayer.MediaStatus ):
+        if status == PySide6.QtMultimedia.QMediaPlayer.MediaStatus.EndOfMedia:
+            self._ready_to_play = True
+            self._try_play_next_sound()
+    
+    @graceful_handler
+    def _try_play_next_sound(self) -> None:
+        if self._ready_to_play and len(self._sound_queue) > 0:
+            self._ready_to_play = False
+
+            media_player = self._sound_queue[0].pop(0)
+            if len( self._sound_queue[0] ) == 0:
+                self._sound_queue.pop(0)
+            
+            media_player.play()
+
+    def get_sound( self, sound_path : str ) -> PySide6.QtMultimedia.QMediaPlayer:
+        if sound_path in self._sound_path_to_media_player:
+            return self._sound_path_to_media_player[sound_path]
+        
+        media_player = PySide6.QtMultimedia.QMediaPlayer()
+        audio_output = PySide6.QtMultimedia.QAudioOutput()
+        self._sound_path_to_media_player[sound_path] = media_player
+        self._audio_outputs.append( audio_output )
+        media_player.setAudioOutput( audio_output )
+        media_player.setSource( PySide6.QtCore.QUrl.fromLocalFile( sound_path ) )
+        media_player.mediaStatusChanged.connect( self._on_media_status_change )
+        return media_player
 
 class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
 
@@ -218,7 +261,7 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
     def graceful_handler( handler ):
         @functools.wraps( handler )
         def wrapped_handler( self : 'QCamScrollArea', *args, **kwargs ):
-            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+            self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
         return wrapped_handler
 
     @graceful_handler
@@ -248,85 +291,6 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
             for item in row_items(row):
                 item.widget().setFixedHeight( ideal_height )
 
-class LiveViewWidget(PySide6.QtWidgets.QWidget):
-
-    _configuration : Configuration
-
-    _fitting_image : FittingImage
-    _overlay : PySide6.QtWidgets.QLabel
-    _overlay_image : PySide6.QtGui.QPixmap
-
-    _last_frame_time_monotonic : float
-    
-    def __init__( self, configuration : Configuration, fitting_image : FittingImage ):
-        super().__init__()
-
-        self._configuration = configuration
-        self._last_frame_time_monotonic = None
-        self._fitting_image = fitting_image
-
-        layout = PySide6.QtWidgets.QStackedLayout()
-        layout.setStackingMode( PySide6.QtWidgets.QStackedLayout.StackingMode.StackAll )
-        self.setLayout(layout)
-        layout.addWidget( self._fitting_image )
-        
-        self._overlay = PySide6.QtWidgets.QLabel()
-        self._overlay_image = PySide6.QtGui.QPixmap( "surveillance_ui/disconnected_icon.png" )
-        self._overlay.setSizePolicy( PySide6.QtWidgets.QSizePolicy.Policy.Fixed, PySide6.QtWidgets.QSizePolicy.Policy.Fixed )
-        self._overlay.setAlignment( PySide6.QtCore.Qt.AlignmentFlag.AlignCenter )
-        layout.addWidget( self._overlay )
-        self._overlay.raise_()
-        self.update_connection_status()
-    
-    def pixmap(self) -> PySide6.QtGui.QPixmap:
-        return self._fitting_image.pixmap()
-    
-    def setPixmap( self, pixmap : PySide6.QtGui.QPixmap ):
-        self._last_frame_time_monotonic = time.monotonic()
-        self._fitting_image.setPixmap( pixmap )
-        self.update_connection_status()
-
-    def heightMatchingAspect( self ) -> int:
-        return self._fitting_image.heightMatchingAspect()
-    
-    def update_connection_status( self ) -> None:
-        delay_seconds = self._configuration.get_disconnect_indicator_delay().total_seconds()
-        period_seconds = 2.0
-        hidden_ratio_seconds = 0.4 # ratio of period during which the indicator overlay should be hidden so the user can actually see the last frame unobstructed
-
-        if self._last_frame_time_monotonic is None :
-            self._set_overlay_opacity( 0 )
-            return
-        
-        time_since_frame_seconds = time.monotonic() - self._last_frame_time_monotonic
-        if time_since_frame_seconds < delay_seconds:
-            self._set_overlay_opacity( 0 )
-            return
-        
-        cycle = abs( (time_since_frame_seconds - delay_seconds) % period_seconds ) / period_seconds # this one goes only up from 0.0 to 1.0
-        cycle = (cycle + hidden_ratio_seconds/2) % 1.0 # skip the hidden ratio when going up (/2 because of the 2* below)
-        cycle = 2*cycle if cycle < 0.5 else 2*(1-cycle) # this one goes up and down
-        if cycle < hidden_ratio_seconds:
-            self._set_overlay_opacity( 0 )
-            return
-        
-        self._set_overlay_opacity( (cycle - hidden_ratio_seconds) * 1/(1-hidden_ratio_seconds) )
-
-    def _set_overlay_opacity( self, opacity : float ) -> None:
-        if opacity == 0:
-            self._overlay.hide()
-        else:
-            self._overlay.show()
-            transparenced_image = PySide6.QtGui.QPixmap( self._overlay_image.size() )
-            transparenced_image.fill( PySide6.QtCore.Qt.GlobalColor.transparent )
-            painter = PySide6.QtGui.QPainter()
-            painter.begin(transparenced_image)
-            painter.setOpacity( opacity )
-            painter.drawPixmap(0, 0, self._overlay_image)
-            painter.end()
-            self._overlay.setPixmap( transparenced_image )
-
-
 class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     
     _configuration : Configuration
@@ -336,22 +300,24 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     _detector : _Detector
     _history : DetectionHistory
     _ignore_list : IgnoreList
-
-    # widgets
+    
+    # Qt
     _coco_check_boxes : list[PySide6.QtWidgets.QCheckBox]
     _sensitivity_slider : PySide6.QtWidgets.QSlider
     _sound_volume_slider : PySide6.QtWidgets.QSlider
     _cams_tab : PySide6.QtWidgets.QTabWidget
-    _live_view_widgets : list[LiveViewWidget]
+    _live_view_widgets : list[LiveView]
     _annotation_widgets : list[FittingImage]
 
     _ignore_list_view : IgnoreListView
     _history_view : DetectionHistoryView
 
     _multiview_scroll_area : QCamScrollArea
-    _multiview_live_view_widgets : list[LiveViewWidget]
+    _multiview_live_view_widgets : list[LiveView]
     _multiview_annotation_widgets : list[FittingImage]
 
+    _cam_id_to_audio_stream_player_dict : dict[int,AudioStreamPlayer]
+    
     _error_handler : ErrorHandler
 
     _signals : _SurveillanceWindowSignals # receives events from worker threads
@@ -371,9 +337,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
 
         self._error_handler = ErrorHandler(self)
 
-        def on_uncaught_alert_player_exception( exception : BaseException ):
-            self._error_handler.report_and_log_error( exception, "Sound alert player thread has crashed." )
-        self._alert_player = _AlertPlayer( self._configuration, on_uncaught_alert_player_exception )
+        self._alert_player = _AlertPlayer( self._configuration, self._error_handler )
+        self._alert_player.set_volume( 0.5 )
 
         self.setWindowTitle("AI Surveillant")
         self.setMinimumSize( 500, 500 )
@@ -395,7 +360,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         controls_bar_layout.addWidget( self._make_vertical_line() )
 
         controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="👁 ") )
-        self._sensitivity_slider, sensitivity_slider_percentage = self._make_percentage_slider( int( (1-configuration.initial_confidence) * 100) )
+        self._sensitivity_slider, sensitivity_slider_percentage = make_percentage_slider( self._error_handler, int( (1-configuration.initial_confidence) * 100) )
         self._sensitivity_slider.valueChanged.connect( lambda: self._on_configuration_change() )
         controls_bar_layout.addWidget( self._sensitivity_slider )
         controls_bar_layout.addWidget( sensitivity_slider_percentage )
@@ -404,10 +369,11 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         controls_bar_layout.addWidget( self._make_vertical_line() )
 
         controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="🔊 ") )
-        self._sound_volume_slider, sound_volume_slider_percentage = self._make_percentage_slider( 50 )      
+        self._sound_volume_slider, sound_volume_slider_percentage = make_percentage_slider( self._error_handler, 50 )      
         controls_bar_layout.addWidget( self._sound_volume_slider )
         controls_bar_layout.addWidget( sound_volume_slider_percentage )
         controls_bar_layout.addStretch()
+        self._sound_volume_slider.valueChanged.connect( self._on_alert_volume_change )
 
         self._cams_tab = PySide6.QtWidgets.QTabWidget()
         layout.addWidget( self._cams_tab )
@@ -440,27 +406,58 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         multiview_layout = PySide6.QtWidgets.QGridLayout()
         multiview_scroll_subwidget.setLayout( multiview_layout )
 
+        # matches LastFrameVideoCapture output format
+        audio_format = PySide6.QtMultimedia.QAudioFormat()
+        audio_format.setChannelCount(1)
+        audio_format.setSampleRate(48000)
+        audio_format.setSampleFormat( PySide6.QtMultimedia.QAudioFormat.SampleFormat.Int16 )
+
         self._live_view_widgets = []        
         self._annotation_widgets = []
         self._multiview_live_view_widgets = []
         self._multiview_annotation_widgets = []
-        for index, cam_definition in enumerate( self._configuration.cam_definitions ):
+        self._cam_id_to_audio_stream_player_dict = dict()
 
-            live_view_widget = LiveViewWidget( self._configuration, self._make_cam_image_widget(  "surveillance_ui/disconnected.png" ) )
+        def on_volume_slider_change( slider_value : int, player : AudioStreamPlayer, live_views : list[LiveView] ):
+            volume = slider_value / 100.0
+            if player.get_volume() != volume:
+                player.set_volume( volume )
+                for live_view in live_views:
+                    live_view.set_volume( slider_value )
+        
+        for index, cam_definition in enumerate( self._configuration.cam_definitions ):
+            
+            audio_stream_player = AudioStreamPlayer(audio_format, self._error_handler)
+            self._cam_id_to_audio_stream_player_dict[cam_definition.id] = audio_stream_player
+
+            live_views = [] # will fill this after partial() but the resulting function still refers to the same instance of list
+            on_local_volume_slider_change = functools.partial( on_volume_slider_change, player=audio_stream_player, live_views=live_views )
+
+            live_view_widget = LiveView(
+                self._configuration,
+                self._error_handler,
+                on_volume_change=on_local_volume_slider_change,
+            )
+            live_views.append( live_view_widget )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
      
-            self._annotation_widgets.append( self._make_cam_image_widget(  "surveillance_ui/empty.png" ) )
+            self._annotation_widgets.append( self._make_detection_image_widget() )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            multiview_cam_widget = LiveViewWidget( self._configuration, self._make_cam_image_widget(  "surveillance_ui/disconnected.png" ) )
+            multiview_cam_widget = LiveView(
+                self._configuration,
+                self._error_handler,
+                on_volume_change=on_local_volume_slider_change,
+            )
+            live_views.append( multiview_cam_widget )
             self._multiview_live_view_widgets.append(multiview_cam_widget)
             row = math.floor(index / self._configuration.grid_column_count)
             column = index - (row*self._configuration.grid_column_count)
             multiview_layout.addWidget( multiview_cam_widget, row, column, 1, 1 )
 
             row += math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count ) # put annotations below live views
-            multiview_annotation_widget = self._make_cam_image_widget(  "surveillance_ui/empty.png" )
+            multiview_annotation_widget = self._make_detection_image_widget()
             self._multiview_annotation_widgets.append(multiview_annotation_widget)
             multiview_layout.addWidget( multiview_annotation_widget, row, column, 1, 1 )
 
@@ -478,12 +475,16 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
 
         self._signals.detection.connect( self._on_detection )
         self._signals.frame.connect( self._on_frame )
+
+        def on_audio_chunk( chunk : _AudioChunk ):
+            self._cam_id_to_audio_stream_player_dict[chunk.cam_id].push( chunk.chunk )
         
         self._detector = _Detector( 
             configuration=self._configuration,
             filter_ignored=self._ignore_list.filter_ignored,
             on_detection=self._signals.detection.emit,
             on_frame=self._signals.frame.emit,
+            on_audio_chunk=on_audio_chunk,
             on_uncaught_exception=self._error_handler.report_and_log_error,
         )
 
@@ -495,24 +496,27 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         for live_view_widget in self._live_view_widgets + self._multiview_live_view_widgets:
             live_view_widget.update_connection_status()
 
-    def _make_cam_image_widget(self, image_path ) -> FittingImage:
+    def _make_detection_image_widget(self) -> FittingImage:
         widget = FittingImage( 5*16, 5*9 , self._error_handler )
-        widget.setPixmap( PySide6.QtGui.QPixmap( image_path ) )
+        widget.setPixmap( PySide6.QtGui.QPixmap( "surveillance_ui/empty.png" ) )
         return widget
+
+    def _on_alert_volume_change( self, value : int ) -> None:
+        self._alert_player.set_volume( value/100 )
 
     def graceful_handler( handler ):
         @functools.wraps( handler )
         def wrapped_handler( self : 'SurveillanceWindow', *args, **kwargs ):
-            self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
+            self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
         return wrapped_handler
     
     def closeEvent( self, event: PySide6.QtGui.QCloseEvent ) -> None:
-        shutdown_alert_thread = threading.Thread(target=self._alert_player.shut_down)
-        shutdown_alert_thread.start()
-        shutdown_detector_thread = threading.Thread(target=self._detector.shut_down)
-        shutdown_detector_thread.start()
-        shutdown_alert_thread.join()
-        shutdown_detector_thread.join()
+        shutdown_actions = [self._alert_player.shut_down, self._detector.shut_down] + [audio_stream_player.shutdown for audio_stream_player in self._cam_id_to_audio_stream_player_dict.values()]
+        shutdown_threads = [threading.Thread(target=action) for action in shutdown_actions]
+        for thread in shutdown_threads:
+            thread.start()
+        for thread in shutdown_threads:
+            thread.join()
 
         super().closeEvent(event)
 
@@ -550,7 +554,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
                 detections=fresh_detections,
                 when=image_detections_info.when
             )
-            self._alert_player.try_fire( image_detections_info=fresh_detection_info, sound_volume=self._sound_volume_slider.value()/100 )
+            self._alert_player.try_alert( image_detections_info=fresh_detection_info )
         
         pixmap = self._make_pixmap( image_detections_info.frame_info.image )
         index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition(image_detections_info.frame_info.cam_id) )
@@ -569,7 +573,7 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         q_image = PySide6.QtGui.QImage( frame, frame.shape[1], frame.shape[0], frame.strides[0], PySide6.QtGui.QImage.Format.Format_RGB888)
         return PySide6.QtGui.QPixmap.fromImage(q_image)
     
-    def _set_pixmap(self, widget : LiveViewWidget, pixmap : PySide6.QtGui.QPixmap ):
+    def _set_pixmap(self, widget : LiveView, pixmap : PySide6.QtGui.QPixmap ):
         previous = widget.pixmap()
         widget.setPixmap( pixmap )
         if previous is None or pixmap.size() != previous.size():
@@ -580,37 +584,6 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         retval.setFrameShape(PySide6.QtWidgets.QFrame.VLine)
         retval.setFrameShadow(PySide6.QtWidgets.QFrame.Sunken)
         return retval
-    
-    def _make_percentage_slider(self, initial_value : int ) -> tuple[PySide6.QtWidgets.QSlider, PySide6.QtWidgets.QLabel]:
-        slider = PySide6.QtWidgets.QSlider( PySide6.QtCore.Qt.Orientation.Horizontal )
-        slider.setMinimum(0)
-        slider.setMaximum(100)
-        slider.setSingleStep(1)
-        slider.setPageStep(10)
-        slider.setValue(initial_value)
-        slider.setMaximumSize( 200, 50 )
-                
-        percentage = PySide6.QtWidgets.QLabel(f"{initial_value} %")
-        percentage.setMinimumSize(30,1)
-        percentage.setAlignment( PySide6.QtCore.Qt.AlignmentFlag.AlignRight )
-        slider.valueChanged.connect( lambda: self._update_percentage( percentage, slider ) )
-        
-        return slider, percentage
-    
-    @graceful_handler
-    def _update_percentage(self, percentage : PySide6.QtWidgets.QLabel, slider : PySide6.QtWidgets.QSlider ) -> None:
-        percentage.setText(f"{slider.value()} %")
-
-def _play_sound_file_blocking( file : str, sound_volume : float ):
-    if file == None:
-        return
-    import pygame
-    pygame.mixer.init()    
-    pygame.mixer.music.load(file)
-    pygame.mixer.music.set_volume(sound_volume)
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        time.sleep(0.01)
 
 def run_surveillance_application( configuration : Configuration ) -> int:
     """
