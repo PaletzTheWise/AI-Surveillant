@@ -6,11 +6,13 @@ from .common import (
     _IgnorePoint,
 ) 
 from .utility import (
-    FittingImage,
     ErrorHandler,
 )
 from ._ignore_list import (
     IgnoreList
+)
+from ._live_view import (
+    LiveView
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
@@ -25,7 +27,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
     _get_cam_image : typing.Callable[[int], PySide6.QtGui.QPixmap]
 
     _ignore_list_widget : PySide6.QtWidgets.QTreeWidget
-    _ignore_item_display : FittingImage
+    _ignore_item_display : LiveView
 
     def __init__( self,
                   ignore_list : IgnoreList,
@@ -48,7 +50,13 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         self._ignore_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
         ignore_list_layout.addWidget( self._ignore_list_widget )
         ignore_list_layout.setStretch( 0, 100)
-        self._ignore_item_display = FittingImage( 50, 50, self._error_handler )
+        empty_image = PySide6.QtGui.QPixmap(16,9)
+        empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
+        self._ignore_item_display = LiveView(
+            self._configuration,
+            self._error_handler,
+            empty_image,
+        )        
         ignore_list_layout.addWidget( self._ignore_item_display )
         ignore_list_layout.setStretch( 1, 1)
         self._ignore_list_widget.currentItemChanged.connect( lambda: self._on_current_item_change() )
@@ -114,7 +122,9 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
     @graceful_handler
     def _on_current_item_change(self) -> None:
         if self._ignore_list_widget.currentIndex() is None:
-            self._ignore_item_display.clear()
+            empty_image = PySide6.QtGui.QPixmap(16,9)
+            empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
+            self._ignore_item_display.setPixmap( empty_image )
             return
         
         item = self._ignore_list_widget.currentItem()

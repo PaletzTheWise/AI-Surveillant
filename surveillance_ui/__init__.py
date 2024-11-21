@@ -307,14 +307,14 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     _sound_volume_slider : PySide6.QtWidgets.QSlider
     _cams_tab : PySide6.QtWidgets.QTabWidget
     _live_view_widgets : list[LiveView]
-    _annotation_widgets : list[FittingImage]
+    _annotation_widgets : list[LiveView]
 
     _ignore_list_view : IgnoreListView
     _history_view : DetectionHistoryView
 
     _multiview_scroll_area : QCamScrollArea
     _multiview_live_view_widgets : list[LiveView]
-    _multiview_annotation_widgets : list[FittingImage]
+    _multiview_annotation_widgets : list[LiveView]
 
     _cam_id_to_audio_stream_player_dict : dict[int,AudioStreamPlayer]
     
@@ -436,18 +436,26 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             live_view_widget = LiveView(
                 self._configuration,
                 self._error_handler,
+                initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/disconnected.png"),
                 on_volume_change=on_local_volume_slider_change,
             )
             live_views.append( live_view_widget )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
      
-            self._annotation_widgets.append( self._make_detection_image_widget() )
+            self._annotation_widgets.append(
+                LiveView( 
+                    self._configuration,
+                    self._error_handler,
+                    initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/empty.png"),
+                ) 
+            )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
             multiview_cam_widget = LiveView(
                 self._configuration,
                 self._error_handler,
+                initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/disconnected.png"),
                 on_volume_change=on_local_volume_slider_change,
             )
             live_views.append( multiview_cam_widget )
@@ -457,7 +465,11 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
             multiview_layout.addWidget( multiview_cam_widget, row, column, 1, 1 )
 
             row += math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count ) # put annotations below live views
-            multiview_annotation_widget = self._make_detection_image_widget()
+            multiview_annotation_widget = LiveView(
+                self._configuration,
+                self._error_handler,
+                initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/empty.png"),
+            )
             self._multiview_annotation_widgets.append(multiview_annotation_widget)
             multiview_layout.addWidget( multiview_annotation_widget, row, column, 1, 1 )
 
@@ -495,11 +507,6 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
     def _update_live_view_connection_status( self ):
         for live_view_widget in self._live_view_widgets + self._multiview_live_view_widgets:
             live_view_widget.update_connection_status()
-
-    def _make_detection_image_widget(self) -> FittingImage:
-        widget = FittingImage( 5*16, 5*9 , self._error_handler )
-        widget.setPixmap( PySide6.QtGui.QPixmap( "surveillance_ui/empty.png" ) )
-        return widget
 
     def _on_alert_volume_change( self, value : int ) -> None:
         self._alert_player.set_volume( value/100 )

@@ -9,11 +9,13 @@ from .common import (
     _IgnorePoint,
 ) 
 from .utility import (
-    FittingImage,
     ErrorHandler,
 )
 from ._history import (
     DetectionHistory
+)
+from ._live_view import (
+    LiveView
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
@@ -28,7 +30,7 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
 
     _detection_history : DetectionHistory
     _detection_list_widget : PySide6.QtWidgets.QTreeWidget
-    _detection_display : FittingImage
+    _detection_display : LiveView
 
     def __init__( self,
                   detection_history : DetectionHistory,
@@ -51,7 +53,13 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         self._detection_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
         detection_list_layout.addWidget( self._detection_list_widget )
         detection_list_layout.setStretch( 0, 100)
-        self._detection_display = FittingImage( 50, 50, self._error_handler )
+        empty_image = PySide6.QtGui.QPixmap(16,9)
+        empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
+        self._detection_display = LiveView(
+            self._configuration,
+            self._error_handler,
+            empty_image,
+        )
         detection_list_layout.addWidget( self._detection_display )
         detection_list_layout.setStretch( 1, 1)
         self._detection_list_widget.currentItemChanged.connect( lambda: self._on_current_item_change() )
@@ -107,7 +115,9 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
     @graceful_handler
     def _on_current_item_change(self) -> None:
         if self._detection_list_widget.currentIndex() is None:
-            self._detection_display.clear()
+            empty_image = PySide6.QtGui.QPixmap(16,9)
+            empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
+            self._detection_display.setPixmap( empty_image )
             return
         
         item = self._detection_list_widget.currentItem()
