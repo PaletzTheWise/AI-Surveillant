@@ -69,6 +69,9 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         self._ignore_list._added_dispatcher.register( self._append )
         self._ignore_list._removed_dispatcher.register( self._remove )
 
+    def shut_down( self ) -> None:
+        self._ignore_item_display.shut_down()
+    
     def graceful_handler( handler ):
         @functools.wraps( handler )
         def wrapped_handler( self : 'IgnoreListView', *args, **kwargs ):

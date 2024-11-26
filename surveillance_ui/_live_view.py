@@ -17,12 +17,15 @@ from .utility import (
 
 class LiveView(PySide6.QtWidgets.QWidget):
 
+    # image_offset = QPointF where coordinates of the full image range from -0.5 to 0.5. ( -0.5; -0.5) corresponds to pixel ( 0; 0),  ( 0.5; 0.5) corresponds to pixel ( width; height).
+    # view_offset = QPointF where coordinates of the currently displayed view of the image range from -0.5 to 0.5.
+
     _configuration : Configuration
     _error_handler : ErrorHandler
 
     _full_image : PySide6.QtGui.QPixmap
     _zoom_level : int
-    _focus_offset : PySide6.QtCore.QPointF # x,y <-0.5, 0.5>
+    _focus_image_offset : PySide6.QtCore.QPointF
     _fitting_image : FittingImage
     _controls_widget : PySide6.QtWidgets.QWidget
     _volume_slider : PySide6.QtWidgets.QSlider
@@ -30,6 +33,9 @@ class LiveView(PySide6.QtWidgets.QWidget):
     _disconnection_image : PySide6.QtGui.QPixmap
 
     _last_frame_time_monotonic : float
+
+    _drag_pivot_image_offset : PySide6.QtCore.QPointF
+    _drag_timer : PySide6.QtCore.QTimer
     
     def __init__( self, configuration : Configuration, error_handler : ErrorHandler, initial_pixmap : PySide6.QtGui.QPixmap, on_volume_change : typing.Callable[[float],None] = None ):
         super().__init__()
@@ -38,6 +44,8 @@ class LiveView(PySide6.QtWidgets.QWidget):
         self._error_handler = error_handler
 
         self._last_frame_time_monotonic = None
+        self._drag_pivot_image_offset = None
+        self._drag_timer = None
 
         self._fitting_image = FittingImage( 5*16, 5*9 , self._error_handler )
 
@@ -114,8 +122,13 @@ class LiveView(PySide6.QtWidgets.QWidget):
         self._fitting_image.marginsChanged.connect( self._controls_widget.setContentsMargins )
 
         self._zoom_level = 0
-        self._focus_offset = PySide6.QtCore.QPointF()
+        self._focus_image_offset = PySide6.QtCore.QPointF()
         self.setPixmap( initial_pixmap )
+    
+    def shut_down( self ) -> None:
+        if self._drag_timer is not None:
+            self._drag_timer.stop()
+            self._drag_timer = None
     
     def graceful_handler( handler ):
         @functools.wraps( handler )
@@ -126,10 +139,46 @@ class LiveView(PySide6.QtWidgets.QWidget):
     @graceful_handler
     def enterEvent( self, event ):
         self._controls_widget.show()
+    
     @graceful_handler
     def leaveEvent( self, event ):
         self._controls_widget.hide()
     
+    @graceful_handler
+    def mousePressEvent( self, event : PySide6.QtGui.QMouseEvent ) -> None:
+        if event.button() != PySide6.QtCore.Qt.MouseButton.LeftButton:
+            return
+
+        cursor_view_offset = self._widget_pos_to_view_offset( event.position() )
+        self._drag_pivot_image_offset = self._view_offset_to_image_offset( cursor_view_offset )
+        if self._drag_timer is None:
+            self._drag_timer = PySide6.QtCore.QTimer()
+            self._drag_timer.timeout.connect( self._drag_update )
+            self._drag_timer.setInterval(20)
+            self._drag_timer.start()
+
+    @graceful_handler
+    def _drag_update( self ) -> None:
+        cursor_global_position = PySide6.QtGui.QCursor.pos()
+        cursor_widget_position = self.mapFromGlobal( cursor_global_position )
+        cursor_view_offset = self._widget_pos_to_view_offset( cursor_widget_position )
+        cursor_image_offset = self._view_offset_to_image_offset( cursor_view_offset )
+
+        self._focus_image_offset -= (cursor_image_offset - self._drag_pivot_image_offset)
+        self._focus_image_offset = self._clamp_focus_image_offest( self._focus_image_offset, self._zoom_level )
+        self._apply_full_image()
+
+    @graceful_handler
+    def mouseReleaseEvent( self, event : PySide6.QtGui.QMouseEvent ) -> None:
+        if event.button() != PySide6.QtCore.Qt.MouseButton.LeftButton:
+            return
+
+
+        self._drag_pivot_image_offset = None
+        if self._drag_timer is not None:
+            self._drag_timer.stop()
+            self._drag_timer = None
+
     def pixmap(self) -> PySide6.QtGui.QPixmap:
         return self._fitting_image.pixmap()
     
@@ -162,7 +211,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
         size = size * magnification
 
         # focus
-        matrix *= t.fromTranslate( size.x() * self._focus_offset.x() * -1, size.y() * self._focus_offset.y() * -1 )
+        matrix *= t.fromTranslate( size.x() * self._focus_image_offset.x() * -1, size.y() * self._focus_image_offset.y() * -1 )
 
         return matrix
 
@@ -229,38 +278,45 @@ class LiveView(PySide6.QtWidgets.QWidget):
     def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
         event.accept()
 
-        cursor_screen_offset = PySide6.QtCore.QPointF( (event.position().x() / self.size().width() ) - 0.5,
-                                                       (event.position().y() / self.size().height()) - 0.5 )
-        cursor_offset = self._focus_offset + self._magnify( cursor_screen_offset, -self._zoom_level )
+        cursor_view_offset = self._widget_pos_to_view_offset( event.position() )
+        cursor_image_offset = self._view_offset_to_image_offset( cursor_view_offset )
 
         if event.angleDelta().y() > 0:
             
             self._zoom_level += 1
-            self._focus_offset = cursor_offset - self._magnify( cursor_screen_offset, -self._zoom_level )
+            self._focus_image_offset = cursor_image_offset - self._magnify( cursor_view_offset, -self._zoom_level )
             
         elif event.angleDelta().y() < 0:
             if self._zoom_level == 0:
                 return # ignore
 
             self._zoom_level -= 1
-            self._focus_offset = cursor_offset - self._magnify( cursor_screen_offset, -self._zoom_level )
-            self._focus_offset = self._clamp_focus_offest( self._focus_offset, self._zoom_level )
+            self._focus_image_offset = cursor_image_offset - self._magnify( cursor_view_offset, -self._zoom_level )
+            self._focus_image_offset = self._clamp_focus_image_offest( self._focus_image_offset, self._zoom_level )
         
         self._apply_full_image()
 
     @graceful_handler
     def _nudge( self, vector : PySide6.QtCore.QPointF ) -> None:
         vector = self._magnify( vector, -self._zoom_level )
-        self._focus_offset += vector
-        self._focus_offset = self._clamp_focus_offest( self._focus_offset, self._zoom_level )
+        self._focus_image_offset += vector
+        self._focus_image_offset = self._clamp_focus_image_offest( self._focus_image_offset, self._zoom_level )
         self._apply_full_image()
     
     @graceful_handler
     def _zoom( self, delta ) -> None:
         self._zoom_level = max( 0, self._zoom_level + delta  )
         self._apply_full_image()
-            
-    def _clamp_focus_offest( self, offset : PySide6.QtCore.QPointF, zoom_level ) -> PySide6.QtCore.QPointF:
+
+    def _widget_pos_to_view_offset( self, widget_position : PySide6.QtCore.QPointF ) -> PySide6.QtCore.QPointF:
+        return PySide6.QtCore.QPointF( (widget_position.x() / self.size().width() ) - 0.5,
+                                       (widget_position.y() / self.size().height()) - 0.5 )
+
+    def _view_offset_to_image_offset( self, view_offset : PySide6.QtCore.QPointF ) -> PySide6.QtCore.QPointF:
+        return self._focus_image_offset + self._magnify( view_offset, -self._zoom_level )
+    
+    def _clamp_focus_image_offest( self, offset : PySide6.QtCore.QPointF, zoom_level ) -> PySide6.QtCore.QPointF:
+        ''' Clamp focus image offset so that the view fits in the image.'''
         def max_focus_offset(zoom_level) -> float:
             return (
                 0.5 # focus with infinite zoom could be at the edge

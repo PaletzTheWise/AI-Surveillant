@@ -518,7 +518,15 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         return wrapped_handler
     
     def closeEvent( self, event: PySide6.QtGui.QCloseEvent ) -> None:
-        shutdown_actions = [self._alert_player.shut_down, self._detector.shut_down] + [audio_stream_player.shutdown for audio_stream_player in self._cam_id_to_audio_stream_player_dict.values()]
+        shutdown_actions = (
+            [self._alert_player.shut_down, self._detector.shut_down] 
+            +
+            [audio_stream_player.shut_down for audio_stream_player in self._cam_id_to_audio_stream_player_dict.values()]
+            +
+            [live_view.shut_down for live_view in (self._live_view_widgets + self._annotation_widgets + self._multiview_live_view_widgets + self._multiview_annotation_widgets)]
+            +
+            [self._history_view.shut_down, self._ignore_list_view.shut_down]
+        )
         shutdown_threads = [threading.Thread(target=action) for action in shutdown_actions]
         for thread in shutdown_threads:
             thread.start()

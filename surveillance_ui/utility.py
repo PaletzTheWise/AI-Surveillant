@@ -418,7 +418,7 @@ class AudioStreamPlayer:
     def get_volume(self) -> int:
         return self._volume
 
-    def shutdown(self):
+    def shut_down(self):
         self._worker.shutdown()
         self._pool.waitForDone()
 

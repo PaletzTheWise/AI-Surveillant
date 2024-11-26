@@ -72,7 +72,9 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         self._detection_history.added_dispatcher.register( self._append )
         self._detection_history.removed_dispatcher.register( self._remove )
     
-
+    def shut_down( self ) -> None:
+        self._detection_display.shut_down()
+    
     def graceful_handler( handler ):
         @functools.wraps( handler )
         def wrapped_handler( self : 'DetectionHistoryView', *args, **kwargs ):
