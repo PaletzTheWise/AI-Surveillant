@@ -5,12 +5,14 @@ import datetime
 import numpy
 import re
 import pathlib
-from .common import (
+from .interface import (
     Configuration,
+)
+from ._common import (
     Point2D,
-    _SvDetection,
-    _ObjectDetectionInfo,
-) 
+    SvDetection,
+    ObjectDetectionInfo,
+)
 from .utility import (
     EventDispatcher,
 )
@@ -22,9 +24,9 @@ class DetectionHistory:
 
     _configuration : Configuration
 
-    _detection_list : list[_ObjectDetectionInfo]
-    added_dispatcher : EventDispatcher[_ObjectDetectionInfo]
-    removed_dispatcher : EventDispatcher[_ObjectDetectionInfo]
+    _detection_list : list[ObjectDetectionInfo]
+    added_dispatcher : EventDispatcher[ObjectDetectionInfo]
+    removed_dispatcher : EventDispatcher[ObjectDetectionInfo]
 
     def __init__( self,
                   configuration : Configuration ):
@@ -37,7 +39,7 @@ class DetectionHistory:
         self._detection_list = []
         self._load_saved_detections()
 
-    def add(self, detection : _ObjectDetectionInfo, image : numpy.ndarray ) -> bool:
+    def add(self, detection : ObjectDetectionInfo, image : numpy.ndarray ) -> bool:
         self._FOLDER.mkdir( exist_ok=True )
 
         pil_image = PIL.Image.fromarray(image, "RGB")
@@ -49,7 +51,7 @@ class DetectionHistory:
         
         return True
 
-    def is_fresh_detection(self, detection : _ObjectDetectionInfo) -> bool:
+    def is_fresh_detection(self, detection : ObjectDetectionInfo) -> bool:
         for existing_detection in self._detection_list:
             if ( detection.cam_id == existing_detection.cam_id
                  and
@@ -69,13 +71,13 @@ class DetectionHistory:
             path = self._FOLDER / self._detection_info_to_filename( detection )
             path.unlink()
 
-    def get_detection_image_data(self, detection : _ObjectDetectionInfo ) -> numpy.ndarray:
+    def get_detection_image_data(self, detection : ObjectDetectionInfo ) -> numpy.ndarray:
         filename = self._detection_info_to_filename( detection )
         with PIL.Image.open( self._FOLDER / filename ) as pil_image:
             return numpy.array(pil_image)
 
     def _load_saved_detections(self) -> None:
-        detections : list[_ObjectDetectionInfo] = []
+        detections : list[ObjectDetectionInfo] = []
         try:
             for filename in os.listdir(self._FOLDER):
                 path = self._FOLDER / filename
@@ -95,7 +97,7 @@ class DetectionHistory:
             self._detection_list.append( detection )
         self._control_length()            
 
-    def detection_info_from_file( self, filename : str  ) -> "_ObjectDetectionInfo | None":
+    def detection_info_from_file( self, filename : str  ) -> "ObjectDetectionInfo | None":
         match : re.Match = re.fullmatch(
             r"(?P<datetime>\d+-\d+-\d+ \d+-\d+-\d+) coco(?P<coco_class_id>\d+) cam(?P<cam_id>\d+) rect(?P<rectangle_x1>\d+)-(?P<rectangle_y1>\d+)-(?P<rectangle_x2>\d+)-(?P<rectangle_y2>\d+) frame(?P<frame_x>\d+)-(?P<frame_y>\d+) conf(?P<conf>\d+).jpg",
             filename
@@ -127,12 +129,12 @@ class DetectionHistory:
         if any( [item is None for item in [coco_class_id, cam_id, confidence_percentage] + xyxy_coords] ):
             return None
 
-        sv_detection  = _SvDetection( xyxy_coords=xyxy_coords, confidence=confidence_percentage/100, coco_class_id=coco_class_id )
+        sv_detection  = SvDetection( xyxy_coords=xyxy_coords, confidence=confidence_percentage/100, coco_class_id=coco_class_id )
         
-        return _ObjectDetectionInfo( cam_id=cam_id, supervision=sv_detection, when=when, frame_size=frame_size )
+        return ObjectDetectionInfo( cam_id=cam_id, supervision=sv_detection, when=when, frame_size=frame_size )
 
     @staticmethod
-    def _detection_info_to_filename(detection : _ObjectDetectionInfo) -> pathlib.Path:
+    def _detection_info_to_filename(detection : ObjectDetectionInfo) -> pathlib.Path:
         sv_detection = detection.supervision
         frame_size = detection.frame_size
         return pathlib.Path(f"{detection.when.strftime(r"%Y-%m-%d %H-%M-%S")} coco{sv_detection.coco_class_id} cam{detection.cam_id} rect{'-'.join([str(int(coord)) for coord in sv_detection.xyxy_coords])} frame{'-'.join([str(int(coord)) for coord in [frame_size.x, frame_size.y]])} conf{'%.0f' % (sv_detection.confidence*100)}.jpg")

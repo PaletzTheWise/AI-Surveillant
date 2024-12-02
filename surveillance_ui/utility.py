@@ -9,12 +9,14 @@ import sys
 import dataclasses
 import time
 import datetime
-import traceback
 import functools
 import av.container.input
 import PySide6.QtWidgets
 import PySide6.QtGui
 import PySide6.QtCore
+from .error_handler import (
+    ErrorHandler as _ErrorHandler
+)
 
 class LastFrameVideoCapture:
     _input_container_constructor : typing.Callable[[],av.container.input.InputContainer]
@@ -22,7 +24,7 @@ class LastFrameVideoCapture:
     _frame_queue : queue.Queue[numpy.ndarray]
     _on_frame : typing.Callable[[numpy.ndarray],None]
     _on_audio_bytes : typing.Callable[[bytes],None]
-    _shut_down_pending : bool = False
+    _shutdown_pending : bool = False
     _resampler : av.AudioResampler
 
     def __init__(
@@ -63,12 +65,12 @@ class LastFrameVideoCapture:
 
         while True:
             try:
-                if self._shut_down_pending:
+                if self._shutdown_pending:
                     return                
                 input_container = self._input_container_constructor()
                 audio_channel_count = len( input_container.streams.audio )
                 for frame in input_container.decode(audio= 0 if audio_channel_count > 0 else None, video=0):
-                    if self._shut_down_pending:
+                    if self._shutdown_pending:
                         return
                     self._process_frame(frame)
             except av.FFmpegError as e:
@@ -101,7 +103,7 @@ class LastFrameVideoCapture:
             return None
     
     def shut_down(self) -> None:
-        self._shut_down_pending = True
+        self._shutdown_pending = True
         self._thread.join()
     
     def _update_latest_frame(self, frame : numpy.ndarray ):
@@ -112,94 +114,12 @@ class LastFrameVideoCapture:
 
         self._frame_queue.put(frame)
 
-@dataclasses.dataclass
-class _UncaughtExceptionInfo:
-    exception : BaseException
-    context : str
-
-class _ErrorHandlerSignals(PySide6.QtCore.QObject):
-    uncaught_exception = PySide6.QtCore.Signal( _UncaughtExceptionInfo )
-
-class ErrorHandler:
-
-    _application : PySide6.QtWidgets.QApplication
-    _last_exception_datetime : datetime
-    _signals : _ErrorHandlerSignals
-
-    def __init__(self, application : PySide6.QtWidgets.QApplication ):
-        self._last_exception_datetime = datetime.datetime.min
-        self._application = application
-        self._signals = _ErrorHandlerSignals()
-        self._signals.uncaught_exception.connect( self._on_uncaught_exception )
-        sys.excepthook = self.excepthook
-
-    def handle_gracefully_internal( self, handler : typing.Callable, *args, **kwargs ):
-        self.handle_gracefully( handler, "Internal error.", *args, **kwargs)
-    
-    def handle_gracefully( self, handler : typing.Callable, context : str, *args, **kwargs ):
-        '''Handle an event "gracefully".
-
-        That is, catch and report any exception.
-
-        This can be used to create a decorator for handlers, assuming handlers can access ErrorHandler through self:
-        ```
-        def graceful_handler( handler ):
-            @functools.wraps( handler )
-                def wrapped_handler( self, *args, **kwargs ):
-                self._error_handler.handle_gracefully( handler, "Internal error.", self, *args, **kwargs )
-            return wrapped_handler
-            
-        @graceful_handler
-        def on_whatever():
-            pass
-        ```
-
-        Parameters:
-            handler - event handler
-            context - error context if one occurs, e.g. "File update detection has crashed."
-            args, kwargs - event arguments to be passed to handler
-        '''
-        try:
-            handler( *args, **kwargs )
-        except BaseException as e: # NOSONAR
-            self.report_and_log_error( e, context )
-    
-    def report_and_log_error( self, exception : BaseException, context : str ):
-        self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(exception,  context) )
-    
-    @staticmethod
-    def excepthook(type, value, traceback):
-        ErrorHandler.log_error( value, "Uncaught exception." )
-        PySide6.QtCore.QCoreApplication.instance().exit(-1)
-        sys.__excepthook__(type,value,traceback)
-
-    @staticmethod
-    def log_error( exception : BaseException, context : str ):
-        with open("errors.txt", "a", encoding="utf-8") as file:
-            file.write( f"{datetime.datetime.now()}\n\n{ErrorHandler._format_error_info(exception, context)}\n---\n\n" )
-
-    @staticmethod
-    def _format_error_info( exception : BaseException, context : str, limit : int | None = None ) -> str:
-        return f"{context}\n\n{'\n'.join(traceback.format_exception(exception, limit = limit ))}"
-    
-    def _on_uncaught_exception( self, uncaught_exception_info : _UncaughtExceptionInfo ) -> None:
-        ErrorHandler.log_error( uncaught_exception_info.exception, uncaught_exception_info.context )
-
-        if (datetime.datetime.now() - self._last_exception_datetime) > datetime.timedelta(seconds=30):
-            self._last_exception_datetime = datetime.datetime.now()
-            dialog = PySide6.QtWidgets.QMessageBox(self._application)
-            dialog.setWindowTitle("Error")
-            dialog.setIcon( PySide6.QtWidgets.QMessageBox.Icon.Critical )
-            dialog.setStandardButtons( PySide6.QtWidgets.QMessageBox.StandardButton.Ok )
-            dialog.setText( f"The application has encountered an unexpected error and may behave erratically going forward.\n\n {ErrorHandler._format_error_info( uncaught_exception_info.exception, uncaught_exception_info.context, 10 )}" )
-            dialog.exec()
-
 class FittingImage(PySide6.QtWidgets.QLabel):
     
-    _error_handler : ErrorHandler
+    _error_handler : _ErrorHandler
     marginsChanged = PySide6.QtCore.Signal( PySide6.QtCore.QMargins )
 
-    def __init__(self, min_size_x : int, min_size_y : int, error_handler : ErrorHandler ):
+    def __init__(self, min_size_x : int, min_size_y : int, error_handler : _ErrorHandler ):
         super().__init__()
         self._error_handler = error_handler
         self.setScaledContents(True)
@@ -263,32 +183,6 @@ class FittingImage(PySide6.QtWidgets.QLabel):
 
 _T = typing.TypeVar('T')
 
-class Synchronized(typing.Generic[_T]):
-
-    _value : _T
-    _lock : threading.RLock
-
-    def __init__(self, value : _T):
-        self._value = value
-        self._lock = threading.RLock()
-    
-    def lock(self) -> "LockContext[_T]":
-        return LockContext(self)
-
-class LockContext(typing.Generic[_T]):
-
-    _synchronized : Synchronized[_T]
-
-    def __init__(self, _synchronized : Synchronized[_T] ):
-        self._synchronized = _synchronized
-
-    def __enter__(self):
-        self._synchronized._lock.acquire()
-        return self._synchronized._value
-
-    def __exit__(self, type, value, traceback):
-        return self._synchronized._lock.release()
-
 class EventDispatcher(typing.Generic[_T]):
 
     _listeners : list[typing.Callable[[_T],None]]
@@ -316,14 +210,14 @@ class _AudioStreamPlayerWorker(PySide6.QtCore.QRunnable):
 
     _format : PySide6.QtMultimedia.QAudioFormat
     _sound_data_queue : queue.Queue[_SoundChunk | _VolumeUpdate]
-    _shut_down_pending : bool = False
-    _error_handler : ErrorHandler
+    _shutdown_pending : bool = False
+    _error_handler : _ErrorHandler
     _target_delay_us : int
     _delay_tolerance_us : int
 
     def __init__( self,
                   format : PySide6.QtMultimedia.QAudioFormat,
-                  error_handler : ErrorHandler,
+                  error_handler : _ErrorHandler,
                   target_delay : datetime.timedelta,
                   delay_tolerance : datetime.timedelta ):
         self._format = format
@@ -348,7 +242,7 @@ class _AudioStreamPlayerWorker(PySide6.QtCore.QRunnable):
         
         while True:
 
-            if self._shut_down_pending:
+            if self._shutdown_pending:
                 return
             
             try:
@@ -390,7 +284,7 @@ class _AudioStreamPlayerWorker(PySide6.QtCore.QRunnable):
         self._sound_data_queue.put( _VolumeUpdate(volume) )
 
     def shutdown(self):
-        self._shut_down_pending = True
+        self._shutdown_pending = True
     
 class AudioStreamPlayer:
 
@@ -400,7 +294,7 @@ class AudioStreamPlayer:
 
     def __init__( self,
                   format : PySide6.QtMultimedia.QAudioFormat,
-                  error_handler : ErrorHandler,
+                  error_handler : _ErrorHandler,
                   target_delay : datetime.timedelta = datetime.timedelta( seconds=0.2 ),
                   delay_tolerance : datetime.timedelta = datetime.timedelta( seconds=0.1 ) ):
         self._volume = 0
@@ -422,7 +316,7 @@ class AudioStreamPlayer:
         self._worker.shutdown()
         self._pool.waitForDone()
 
-def make_percentage_slider( error_handdler : ErrorHandler, initial_value : int ) -> tuple[PySide6.QtWidgets.QSlider, PySide6.QtWidgets.QLabel]:
+def make_percentage_slider( error_handdler : _ErrorHandler, initial_value : int ) -> tuple[PySide6.QtWidgets.QSlider, PySide6.QtWidgets.QLabel]:
     slider = PySide6.QtWidgets.QSlider( PySide6.QtCore.Qt.Orientation.Horizontal )
     slider.setMinimum(0)
     slider.setMaximum(100)

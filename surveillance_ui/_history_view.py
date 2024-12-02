@@ -2,13 +2,15 @@ import pathlib
 import typing
 import statistics
 import functools
-from .common import (
+from .interface import (
     Configuration,
+)
+from ._common import (
     Point2D,
-    _ObjectDetectionInfo,
-    _IgnorePoint,
+    ObjectDetectionInfo,
+    IgnorePoint,
 ) 
-from .utility import (
+from .error_handler import (
     ErrorHandler,
 )
 from ._history import (
@@ -26,7 +28,7 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
 
     _configuration : Configuration
     _error_handler : ErrorHandler
-    _add_to_ignore : typing.Callable[[_IgnorePoint],None]
+    _add_to_ignore : typing.Callable[[IgnorePoint],None]
 
     _detection_history : DetectionHistory
     _detection_list_widget : PySide6.QtWidgets.QTreeWidget
@@ -36,7 +38,7 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
                   detection_history : DetectionHistory,
                   configuration : Configuration,
                   error_handler : ErrorHandler,
-                  add_to_ignore : typing.Callable[[_IgnorePoint],None] ):
+                  add_to_ignore : typing.Callable[[IgnorePoint],None] ):
         super().__init__()
         self._detection_history = detection_history
         self._configuration = configuration
@@ -81,12 +83,12 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
             self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
         return wrapped_handler
 
-    def _set_item_detection( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem, detection : _ObjectDetectionInfo ) -> None:
+    def _set_item_detection( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem, detection : ObjectDetectionInfo ) -> None:
         item_widget.user_detection = detection
-    def _get_item_detection( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem ) -> _ObjectDetectionInfo:
+    def _get_item_detection( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem ) -> ObjectDetectionInfo:
         return item_widget.user_detection
     
-    def _append(self, detection : _ObjectDetectionInfo ):
+    def _append(self, detection : ObjectDetectionInfo ):
         interest = self._configuration.get_interest( detection.supervision.coco_class_id )
         cam_definition = self._configuration.get_cam_definition( detection.cam_id )
         strings = [
@@ -104,7 +106,7 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         button.pressed.connect( lambda: self._ignore(detection) )
         self._detection_list_widget.setItemWidget(item, 5, button)
 
-    def _remove(self, removed_detection : _ObjectDetectionInfo ):
+    def _remove(self, removed_detection : ObjectDetectionInfo ):
         it = PySide6.QtWidgets.QTreeWidgetItemIterator(self._detection_list_widget)
         while it.value():
             item = it.value()
@@ -129,11 +131,11 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         self._detection_display.setPixmap( pixmap )
     
     @graceful_handler
-    def _ignore(self, detection : _ObjectDetectionInfo ):
+    def _ignore(self, detection : ObjectDetectionInfo ):
         xyxy_coords = detection.supervision.xyxy_coords
         x = float( statistics.mean( [xyxy_coords[0], xyxy_coords[2]] ) / detection.frame_size.x )
         y = float( statistics.mean( [xyxy_coords[1], xyxy_coords[3]] ) / detection.frame_size.y )
-        self._add_to_ignore( _IgnorePoint( coco_class_id=detection.supervision.coco_class_id, at=Point2D(x,y), cam_id=detection.cam_id ) )
+        self._add_to_ignore( IgnorePoint( coco_class_id=detection.supervision.coco_class_id, at=Point2D(x,y), cam_id=detection.cam_id ) )
 
     @graceful_handler
     def _adjust_list_view_width(self):

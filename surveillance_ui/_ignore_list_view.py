@@ -1,11 +1,13 @@
 import functools
 import typing
-from .common import (
+from .interface import (
     Configuration,
+)
+from ._common import (
     Point2D,
-    _IgnorePoint,
+    IgnorePoint,
 ) 
-from .utility import (
+from .error_handler import (
     ErrorHandler,
 )
 from ._ignore_list import (
@@ -78,12 +80,12 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
             self._error_handler.handle_gracefully_internal( handler, self, *args, **kwargs )
         return wrapped_handler
 
-    def _set_item_ignore_point( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem, ignore_point : _IgnorePoint ) -> None:
+    def _set_item_ignore_point( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem, ignore_point : IgnorePoint ) -> None:
         item_widget.user_ignore_point = ignore_point
-    def _get_item_ignore_point( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem ) -> _IgnorePoint:
+    def _get_item_ignore_point( self, item_widget : PySide6.QtWidgets.QTreeWidgetItem ) -> IgnorePoint:
         return item_widget.user_ignore_point
     
-    def _append(self, ignore_point : _IgnorePoint ) -> None:
+    def _append(self, ignore_point : IgnorePoint ) -> None:
         try:
             cam_label = self._configuration.get_cam_definition( ignore_point.cam_id ).label
         except ValueError:
@@ -108,7 +110,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         self._ignore_list_widget.setItemWidget(item, 3, button)
 
 
-    def _remove(self, removed_ignore_point : _IgnorePoint ):
+    def _remove(self, removed_ignore_point : IgnorePoint ):
         it = PySide6.QtWidgets.QTreeWidgetItemIterator(self._ignore_list_widget)
         while it.value():
             item = it.value()
@@ -119,7 +121,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         raise ValueError("Ignore point not found.")
 
     @graceful_handler
-    def _remove_from_model(self, ignore_point : _IgnorePoint ) -> None:
+    def _remove_from_model(self, ignore_point : IgnorePoint ) -> None:
         self._ignore_list.remove( ignore_point )
     
     @graceful_handler

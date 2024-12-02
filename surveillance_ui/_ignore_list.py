@@ -1,17 +1,21 @@
 import pathlib
 import pathlib
 import json
-from .common import (
+import supervision
+from .interface import (
     Configuration,
-    SupervisionDetections,
     CamDefinition,
+)
+from ._common import (
     Point2D,
-    _SvDetection,
-    _IgnorePoint,
+    SvDetection,
+    IgnorePoint,
 ) 
 from .utility import (
-    Synchronized,
     EventDispatcher,
+)
+from .synchronized import (
+    Synchronized,
 )
 import PySide6.QtWidgets
 import PySide6.QtGui
@@ -23,9 +27,9 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
 
     _configuration : Configuration
 
-    _synchronized_ignore_list : Synchronized[list[_IgnorePoint]]
-    _added_dispatcher : EventDispatcher[_IgnorePoint]
-    _removed_dispatcher : EventDispatcher[_IgnorePoint]
+    _synchronized_ignore_list : Synchronized[list[IgnorePoint]]
+    _added_dispatcher : EventDispatcher[IgnorePoint]
+    _removed_dispatcher : EventDispatcher[IgnorePoint]
 
     def __init__( self,
                   configuration : Configuration ):
@@ -44,26 +48,26 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
         with self._synchronized_ignore_list.lock() as ignore_list:
             return ignore_list.copy()
     
-    def add(self, ignore_point : _IgnorePoint ):
+    def add(self, ignore_point : IgnorePoint ):
         with self._synchronized_ignore_list.lock() as ignore_list:
             ignore_list.append( ignore_point )
         self._added_dispatcher.fire(ignore_point)
         self._save_ignore_list()
     
-    def remove(self, ignore_point : _IgnorePoint ):
+    def remove(self, ignore_point : IgnorePoint ):
         with self._synchronized_ignore_list.lock() as ignore_list:
             ignore_list.remove( ignore_point )
         self._removed_dispatcher.fire(ignore_point)
         self._save_ignore_list()
 
-    def filter_ignored( self, detections : SupervisionDetections, cam_definition : CamDefinition, frame_size : Point2D[int] ) -> SupervisionDetections:
+    def filter_ignored( self, detections : supervision.Detections, cam_definition : CamDefinition, frame_size : Point2D[int] ) -> supervision.Detections:
         """
         Filter detections to remove ignored detections.
         
         Thread-safe.
         """
         valid_detection_indices : list[int] = []
-        for index, detection in enumerate( _SvDetection.list_from_sv_detections( detections ) ):
+        for index, detection in enumerate( SvDetection.list_from_sv_detections( detections ) ):
             xyxy_coords=detection.xyxy_coords
             area = float((xyxy_coords[2]-xyxy_coords[0])*(xyxy_coords[3]-xyxy_coords[1]))
             if ( area < self._configuration.minimum_detection_area
@@ -99,13 +103,13 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
         
         return False
 
-    def _load_ignore_list(self) -> list[_IgnorePoint]:
-        ignore_points : list[_IgnorePoint] = []
+    def _load_ignore_list(self) -> list[IgnorePoint]:
+        ignore_points : list[IgnorePoint] = []
         try:
             with open( self._IGNORE_FILE, "r") as file:
                 for item in json.load( file ):
                     ignore_points.append(
-                        _IgnorePoint(
+                        IgnorePoint(
                             coco_class_id = int(item["coco_class_id"]),
                             at = Point2D( float(item["x"]), float(item["y"]) ),
                             cam_id = int(item["cam_id"])
@@ -116,7 +120,7 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
         
         return ignore_points
     
-    def _ignore_point_to_dict( self, ignore_point : _IgnorePoint ) -> dict:
+    def _ignore_point_to_dict( self, ignore_point : IgnorePoint ) -> dict:
         return {
             "coco_class_id" : ignore_point.coco_class_id,
             "x" : ignore_point.at.x,

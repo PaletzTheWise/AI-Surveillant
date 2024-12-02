@@ -1,11 +1,12 @@
 import sys
-import numpy
 import typing
 import surveillance_ui
 import os.path
 import enum
-import supervision
-import supervision.config
+
+if typing.TYPE_CHECKING:
+    import numpy
+    import supervision
 
 # This code assumes YOLOv9 (https://github.com/WongKinYiu/yolov9) is cloned into the yolov9 subfolder.
 
@@ -46,13 +47,16 @@ class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
         model.classes = coco_class_ids
         model.conf = confidence
 
-    def detect( self, image : numpy.ndarray ) -> surveillance_ui.SupervisionDetections:
+    def detect( self, image : 'numpy.ndarray' ) -> 'supervision.Detections':
         self._ensure_model_initialized()
         results = self._model(image, (image.shape[1], image.shape[0]), augment=False)
         return self._yolov9_detections_to_sv(results)
     
-    def _yolov9_detections_to_sv(self, yolov9_results) -> surveillance_ui.SupervisionDetections:
+    def _yolov9_detections_to_sv(self, yolov9_results) -> 'supervision.Detections':
         import torch
+        import numpy
+        import supervision
+        import supervision.config
 
         xyxy, confidences, class_ids = [], [], []
 

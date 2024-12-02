@@ -6,13 +6,15 @@ import PySide6.QtWidgets
 import PySide6.QtGui
 import PySide6.QtCore
 
-from .common import (
+from .interface import (
     Configuration,
 )
 from .utility import (
     FittingImage,
-    ErrorHandler,
     make_percentage_slider,
+)
+from .error_handler import (
+    ErrorHandler,
 )
 
 class LiveView(PySide6.QtWidgets.QWidget):
