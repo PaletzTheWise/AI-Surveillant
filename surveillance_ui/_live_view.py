@@ -79,28 +79,39 @@ class LiveView(PySide6.QtWidgets.QWidget):
 
         def set_font_size(widget : PySide6.QtWidgets.QWidget):
             font = widget.font()
-            font.setPointSize(16)
+            font.setPointSize(8)
             widget.setFont(font)
         
-        def add_arrow( vector, text ):
+        def make_button( text ):
             button = PySide6.QtWidgets.QPushButton( text=text )
             set_font_size( button )
+            return button
+        
+        def make_arrow_button( vector, text ):
+            button = make_button( text )
             button.pressed.connect( lambda: self._nudge( vector ) )
-            controls_layout.addWidget( button )
+            return button
 
-        add_arrow( PySide6.QtCore.QPointF(-1/5, 0 ), " ← " )
-        add_arrow( PySide6.QtCore.QPointF( 1/5, 0 ), " → " )
-        add_arrow( PySide6.QtCore.QPointF( 0,-1/5 ), " ↑ " )
-        add_arrow( PySide6.QtCore.QPointF( 0, 1/5 ), " ↓ " )
-        
-        def add_magnifier( delta, text ):
-            button = PySide6.QtWidgets.QPushButton( text=text )
-            set_font_size( button )
+        def make_magnifier_button( delta, text ):
+            button = make_button( text )
             button.pressed.connect( lambda: self._zoom( delta ) )
-            controls_layout.addWidget( button )
+            return button
+
+        zoom_button_widget = PySide6.QtWidgets.QWidget()
+        controls_layout.addWidget( zoom_button_widget )
+        zoom_button_layout = PySide6.QtWidgets.QGridLayout()
+        zoom_button_layout.setContentsMargins( 0, 0, 0, 0 )
+        zoom_button_layout.setSpacing( 0 )
+        zoom_button_widget.setLayout( zoom_button_layout )
+
+        zoom_button_layout.addWidget( make_arrow_button( PySide6.QtCore.QPointF(-1/5, 0 ), "⯇" ), 0, 0, 1, 1 )
+        zoom_button_layout.addWidget( make_arrow_button( PySide6.QtCore.QPointF( 1/5, 0 ), "⯈" ), 1, 0, 1, 1 )
+        zoom_button_layout.addWidget( make_arrow_button( PySide6.QtCore.QPointF( 0,-1/5 ), "⯅" ), 0, 1, 1, 1 )
+        zoom_button_layout.addWidget( make_arrow_button( PySide6.QtCore.QPointF( 0, 1/5 ), "⯆" ), 1, 1, 1, 1 )
+        zoom_button_layout.addWidget( make_magnifier_button( +1, "+" ), 0, 2, 1, 1 )
+        zoom_button_layout.addWidget( make_magnifier_button( -1, "-" ), 1, 2, 1, 1 )
         
-        add_magnifier( +1, " + " )
-        add_magnifier( -1, " - " )
+        
         
         if on_volume_change is not None:
             self._volume_slider, volume_label = make_percentage_slider(self._error_handler, 0)
@@ -114,6 +125,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
         controls_layout.addStretch(1)
 
         self._disconnection_indicator = PySide6.QtWidgets.QLabel()
+        self._disconnection_indicator.setAttribute( PySide6.QtGui.Qt.WidgetAttribute.WA_TransparentForMouseEvents )
         self._disconnection_image = PySide6.QtGui.QPixmap( "surveillance_ui/disconnected_icon.png" )
         self._disconnection_indicator.setSizePolicy( PySide6.QtWidgets.QSizePolicy.Policy.Fixed, PySide6.QtWidgets.QSizePolicy.Policy.Fixed )
         self._disconnection_indicator.setAlignment( PySide6.QtCore.Qt.AlignmentFlag.AlignCenter )
@@ -278,6 +290,11 @@ class LiveView(PySide6.QtWidgets.QWidget):
 
     @graceful_handler
     def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
+        if PySide6.QtCore.Qt.KeyboardModifier.ControlModifier in event.modifiers():
+            # forward to the parent widget, maybe it has a scrollbar
+            event.ignore()
+            return
+        
         event.accept()
 
         cursor_view_offset = self._widget_pos_to_view_offset( event.position() )

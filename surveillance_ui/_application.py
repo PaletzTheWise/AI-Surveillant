@@ -302,6 +302,18 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
             ideal_height = max( row_heights_matching_aspect(row) )
             for item in row_items(row):
                 item.widget().setFixedHeight( ideal_height )
+    
+    @graceful_handler
+    def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
+        # Default behavior scrolls to top/bottom when ctrl is held but we use ctrl to direct scrolling to QCamScrollArea rather than individual LiveView zoom
+        if event.angleDelta().y() > 0:
+            self.verticalScrollBar().setValue( self.verticalScrollBar().value() - self.verticalScrollBar().singleStep() )
+            event.accept()
+        elif event.angleDelta().y() < 0:
+            self.verticalScrollBar().setValue( self.verticalScrollBar().value() + self.verticalScrollBar().singleStep() )
+            event.accept()
+        else:
+            super().wheelEvent( event )
 
 class SurveillanceWidget(PySide6.QtWidgets.QWidget):
     
@@ -390,7 +402,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         layout.addWidget( self._cams_tab )
 
         self._multiview_scroll_area = QCamScrollArea( self._error_handler )
-        self._multiview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff )
+        self._multiview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded )
         self._multiview_scroll_area.setVerticalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn )
         self._multiview_scroll_area.setWidgetResizable(True)
         self._cams_tab.addTab( self._multiview_scroll_area, "  *  " )
