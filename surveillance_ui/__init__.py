@@ -53,7 +53,8 @@ class SurveillanceWindow(PySide6.QtWidgets.QMainWindow):
         self._preload_thread = threading.Thread( target=self._pre_load )
         self._preload_thread.daemon = True
         self._preload_thread.start()
-
+        
+        self.setWindowTitle("AI Surveillant")
         self.showMaximized()
 
     def graceful_handler( handler ):

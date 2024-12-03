@@ -364,7 +364,6 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         self._alert_player = _AlertPlayer( self._configuration, self._error_handler )
         self._alert_player.set_volume( 0.5 )
 
-        self.setWindowTitle("AI Surveillant")
         self.setMinimumSize( 500, 500 )
 
         layout = PySide6.QtWidgets.QVBoxLayout()
