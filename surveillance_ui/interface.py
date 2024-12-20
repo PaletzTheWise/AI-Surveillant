@@ -61,6 +61,9 @@ class Configuration:
             if cam_definition.id == cam_id:
                 return cam_definition
         raise ValueError("Unknown cam ID.")
+
+    def is_defined_cam( self, cam_id : int ) -> bool:
+        return any( [cd.id == cam_id for cd in self.cam_definitions] )
     
     def get_interest( self, coco_class_id : int ) -> Interest:
         for interest in self.interests:
