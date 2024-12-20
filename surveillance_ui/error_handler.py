@@ -3,6 +3,7 @@ import sys
 import dataclasses
 import datetime
 import traceback
+import threading
 import PySide6.QtWidgets
 import PySide6.QtGui
 import PySide6.QtCore
@@ -20,10 +21,13 @@ class ErrorHandler:
     _application : PySide6.QtWidgets.QApplication
     _last_exception_datetime : datetime
     _signals : _ErrorHandlerSignals
+    _local : threading.local
 
     def __init__(self, application : PySide6.QtWidgets.QApplication ):
         self._last_exception_datetime = datetime.datetime.min
         self._application = application
+        self._local = threading.local()
+
         self._signals = _ErrorHandlerSignals()
         self._signals.uncaught_exception.connect( self._on_uncaught_exception )
         sys.excepthook = self.excepthook
@@ -55,9 +59,17 @@ class ErrorHandler:
             args, kwargs - event arguments to be passed to handler
         '''
         try:
+            self._local.exception_handler_count = 1 + getattr( self._local, "exception_handler_count", 0 )
             handler( *args, **kwargs )
+        except RecursionError as e:
+            if self._local.exception_handler_count > 1:
+                raise # kick this up so that we don't run out of stack again while reporting it
+            else:
+                self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(e,  context) )
         except BaseException as e: # NOSONAR
-            self.report_and_log_error( e, context )
+            self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(e,  context) )
+        finally:
+            self._local.exception_handler_count -= 1
     
     def report_and_log_error( self, exception : BaseException, context : str ):
         self._signals.uncaught_exception.emit( _UncaughtExceptionInfo(exception,  context) )
