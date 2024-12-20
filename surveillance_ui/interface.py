@@ -12,6 +12,7 @@ class CamDefinition:
     id : int
     label : str
     sound_alert_path : str
+    discard_corrupted_frames : bool = False
 
 @dataclasses.dataclass
 class Interest:

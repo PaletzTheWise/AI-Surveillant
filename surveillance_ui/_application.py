@@ -139,8 +139,10 @@ class _Detector():
                     'rtsp_transport': 'tcp' if self._configuration.use_tcp_transport else 'udp',
                     'stimeout' : str(self._configuration.camera_feed_timeout.total_seconds()*pow(10,6)),
                     'max_delay': str(self._configuration.max_delay.total_seconds()*pow(10,6)),
-                }
+                },
             )
+            if cam_definition.discard_corrupted_frames:
+                input_container.flags |= av.container.Flags.DISCARD_CORRUPT
             return input_container
         
         def on_frame( frame : numpy.ndarray ):
