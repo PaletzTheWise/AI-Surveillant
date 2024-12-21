@@ -295,18 +295,6 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
     def _get_layout( self ) -> _OverviewLayout:
         return self.widget().layout()
 
-    @graceful_handler
-    def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
-        # Default behavior scrolls to top/bottom when ctrl is held but we use ctrl to direct scrolling to QCamScrollArea rather than individual LiveView zoom
-        if event.angleDelta().y() > 0:
-            self.verticalScrollBar().setValue( self.verticalScrollBar().value() - self.verticalScrollBar().singleStep() )
-            event.accept()
-        elif event.angleDelta().y() < 0:
-            self.verticalScrollBar().setValue( self.verticalScrollBar().value() + self.verticalScrollBar().singleStep() )
-            event.accept()
-        else:
-            super().wheelEvent( event )
-
 class _OverviewAutoLayout(PySide6.QtWidgets.QGridLayout):
     _configuration : Configuration
     

@@ -290,7 +290,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
 
     @graceful_handler
     def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
-        if PySide6.QtCore.Qt.KeyboardModifier.ControlModifier in event.modifiers():
+        if PySide6.QtCore.Qt.KeyboardModifier.ControlModifier not in event.modifiers():
             # forward to the parent widget, maybe it has a scrollbar
             event.ignore()
             return
