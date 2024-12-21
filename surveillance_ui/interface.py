@@ -1,6 +1,7 @@
 import typing
 import dataclasses
 import datetime
+import PySide6.QtCore
 
 if typing.TYPE_CHECKING:
     import numpy
@@ -44,11 +45,21 @@ class DetectionLogic(typing.Protocol):
 
 @dataclasses.dataclass
 class Configuration:
+    """
+    params:
+        grid_column_count - Grid column count in the overview tab used for automatic layout and even for manual layout through grid_widgets if it exceeds the implied column count.
+        grid_widget_locs - Camera widget locations in the overview tab square grid, if none, cameras will be laid out automatically.
+                           This is useful to arrange cameras with different aspect ratios.
+                           The location count must match camera count (alerts widgets will repeat the same locations underneath cam widgets) 
+                           or double the camera count (alert widgets will use the second half of the locations).
+                           Top left corner square is (0,0). The first component is horizontal, the second component is vertical.
+    """
     cam_definitions : list[CamDefinition]
     interests : list[Interest]
     max_history_entries : int
     detection_logic : DetectionLogic
-    grid_column_count : int
+    grid_column_count : int = 2 
+    grid_widget_locs : list[PySide6.QtCore.QRect] | None = None
     initial_confidence : float = 0.65
     minimum_detection_area : int = 1500
     redetection_delay : datetime.timedelta = datetime.timedelta( seconds=15 )

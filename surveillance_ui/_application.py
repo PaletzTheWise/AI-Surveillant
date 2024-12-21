@@ -264,6 +264,10 @@ class _AlertPlayer:
         media_player.mediaStatusChanged.connect( self._on_media_status_change )
         return media_player
 
+class _OverviewLayout(typing.Protocol):
+    def adjust_cam_sizes(self) -> None:
+        """Adjust cam sizes so they fit properly."""
+
 class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
 
     _error_handler : ErrorHandler
@@ -281,30 +285,16 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
     @graceful_handler
     def resizeEvent( self, event ) -> None:
         super().resizeEvent( event )
-        self.adjustCamSizes()
+        self._get_layout().adjust_cam_sizes()
     
     @graceful_handler
     def showEvent( self, event ) -> None:
         super().showEvent( event )
-        self.adjustCamSizes()
+        self._get_layout().adjust_cam_sizes()
+  
+    def _get_layout( self ) -> _OverviewLayout:
+        return self.widget().layout()
 
-    def adjustCamSizes( self ):
-        if self.widget().layout() is None:
-            return
-        
-        layout : PySide6.QtWidgets.QGridLayout = self.widget().layout()
-
-        def row_items(row):
-            items = [layout.itemAtPosition(row, column) for column in range( 0, layout.columnCount())]
-            return filter( lambda item: item is not None, items )
-        def row_heights_matching_aspect(row):
-            return [item.widget().heightMatchingAspect() for item in row_items(row)]
-        
-        for row in range( 0, layout.rowCount() ):
-            ideal_height = max( row_heights_matching_aspect(row) )
-            for item in row_items(row):
-                item.widget().setFixedHeight( ideal_height )
-    
     @graceful_handler
     def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
         # Default behavior scrolls to top/bottom when ctrl is held but we use ctrl to direct scrolling to QCamScrollArea rather than individual LiveView zoom
@@ -316,6 +306,120 @@ class QCamScrollArea(PySide6.QtWidgets.QScrollArea):
             event.accept()
         else:
             super().wheelEvent( event )
+
+class _OverviewAutoLayout(PySide6.QtWidgets.QGridLayout):
+    _configuration : Configuration
+    
+    def __init__(self, configuration : Configuration):
+        super().__init__()
+        self._configuration = configuration
+
+        self.setHorizontalSpacing(0)
+        self.setVerticalSpacing(0)
+
+    def addWidget( self, widget : PySide6.QtWidgets.QWidget ) -> None:
+        index = self.count()
+
+        group_row = 0
+
+        if index >= len(self._configuration.cam_definitions):
+            # annotations, lay them out separately below live views
+            index -= len(self._configuration.cam_definitions)
+            group_row = math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count )
+
+        row = group_row + math.floor(index / self._configuration.grid_column_count)
+        column = index % self._configuration.grid_column_count
+        
+        self.setRowStretch( row, 1 )
+        self.setColumnStretch( column, 1 )
+
+        super().addWidget( widget, row, column, 1, 1 )
+    
+    def adjust_cam_sizes(self):
+        def row_items(row):
+            items = [self.itemAtPosition(row, column) for column in range( 0, self.columnCount())]
+            return filter( lambda item: item is not None, items )
+        def row_heights_matching_aspect(row):
+            return [item.widget().heightMatchingAspect() for item in row_items(row)]
+        
+        for row in range( 0, self.rowCount() ):
+            ideal_height = max( row_heights_matching_aspect(row) )
+            for item in row_items(row):
+                item.widget().setFixedHeight( ideal_height )
+
+class _OverviewManualLayout(PySide6.QtWidgets.QLayout):
+    _configuration : Configuration
+    _items : list[PySide6.QtWidgets.QLayoutItem]
+    _aspect_ratio : PySide6.QtCore.QSize
+    _widget_locations : list[PySide6.QtCore.QRect]
+
+    def __init__(self, configuration : Configuration):
+        super().__init__()
+        self._configuration = configuration
+        self._items = []
+
+        loc_count = len( self._configuration.grid_widget_locs )
+        cam_count = len( self._configuration.cam_definitions ) 
+        if loc_count not in [cam_count, 2*cam_count]:
+            raise ValueError(f"Manual layout requires widget location count ({loc_count} provided) matching or double of camera count ({cam_count} provided).")
+        
+        self._widget_locations = self._configuration.grid_widget_locs.copy()
+        row_count = max( [w.y()+w.height() for w in self._widget_locations] )
+        column_count = max( [w.x()+w.width() for w in self._widget_locations] + [self._configuration.grid_column_count] )
+
+        if loc_count == cam_count:
+            # add another set of widget locations under the existing ones for the annotation widgets
+            self._widget_locations.extend( [PySide6.QtCore.QRect( w.x(), w.y()+row_count, w.width(), w.height() ) for w in self._widget_locations] )
+            row_count *= 2
+
+        self._aspect_ratio = PySide6.QtCore.QSize( column_count, row_count )
+    
+    def count( self ) -> int:
+        return len(self._items)
+
+    def addItem( self, item : PySide6.QtWidgets.QLayoutItem ) -> None:
+        self._items.append(item)
+    
+    def itemAt( self, index : int ) -> PySide6.QtWidgets.QLayoutItem | None:
+        if index < 0 or len(self._items) <= index:
+            return None
+        return self._items[index]
+    
+    def takeAt( self, index : int ) -> PySide6.QtWidgets.QLayoutItem | None:
+        if index < 0 or len(self._items) <= index:
+            return None
+        return self._items.pop(index)
+    
+    def sizeHint( self ) -> PySide6.QtCore.QSize:
+        return self._aspect_ratio
+    
+    def setGeometry(self, rect: PySide6.QtCore.QRect) -> None:
+        magnification = rect.width() / self._aspect_ratio.width()
+
+        def magnify_rectangle( r : PySide6.QtCore.QRect ) -> PySide6.QtCore.QRect:
+            return PySide6.QtCore.QRect(
+                PySide6.QtCore.QPoint(
+                    math.floor( r.left() * magnification ),
+                    math.floor( r.top() * magnification )
+                ),
+                PySide6.QtCore.QPoint(
+                    math.floor( (r.right() + 1) * magnification ) - 1,
+                    math.floor( (r.bottom() + 1) * magnification ) - 1
+                )
+            )
+        
+        for location, widget in zip( self._widget_locations, self._items ):
+            widget.setGeometry( magnify_rectangle( location ) )
+        
+    def hasHeightForWidth( self ) -> bool:
+        return True
+    
+    def heightForWidth( self, width : int ) -> int:
+        magnification = width / self._aspect_ratio.width()
+        return math.floor( self._aspect_ratio.height() * magnification )
+
+    def adjust_cam_sizes(self):
+        pass # let's not end up in an infinite recursion
 
 class SurveillanceWidget(PySide6.QtWidgets.QWidget):
     
@@ -338,9 +442,9 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
     _ignore_list_view : IgnoreListView
     _history_view : DetectionHistoryView
 
-    _multiview_scroll_area : QCamScrollArea
-    _multiview_live_view_widgets : list[LiveView]
-    _multiview_annotation_widgets : list[LiveView]
+    _overview_scroll_area : QCamScrollArea
+    _overview_live_view_widgets : list[LiveView]
+    _overview_annotation_widgets : list[LiveView]
 
     _cam_id_to_audio_stream_player_dict : dict[int,AudioStreamPlayer]
     
@@ -402,11 +506,11 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         self._cams_tab = PySide6.QtWidgets.QTabWidget()
         layout.addWidget( self._cams_tab )
 
-        self._multiview_scroll_area = QCamScrollArea( self._error_handler )
-        self._multiview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded )
-        self._multiview_scroll_area.setVerticalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn )
-        self._multiview_scroll_area.setWidgetResizable(True)
-        self._cams_tab.addTab( self._multiview_scroll_area, "  *  " )
+        self._overview_scroll_area = QCamScrollArea( self._error_handler )
+        self._overview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded )
+        self._overview_scroll_area.setVerticalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn )
+        self._overview_scroll_area.setWidgetResizable(True)
+        self._cams_tab.addTab( self._overview_scroll_area, "  *  " )
 
         def get_cam_image( cam_id : int ) -> PySide6.QtGui.QImage:
             cam_index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition( cam_id ) )
@@ -424,11 +528,15 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         )
         self._cams_tab.addTab( self._history_view, " !,!,... " )
 
-        multiview_scroll_subwidget = PySide6.QtWidgets.QWidget()
-        self._multiview_scroll_area.setWidget( multiview_scroll_subwidget )
+        overview_scroll_subwidget = PySide6.QtWidgets.QWidget()
+        self._overview_scroll_area.setWidget( overview_scroll_subwidget )
 
-        multiview_layout = PySide6.QtWidgets.QGridLayout()
-        multiview_scroll_subwidget.setLayout( multiview_layout )
+        if self._configuration.grid_widget_locs is None:
+            overview_layout = _OverviewAutoLayout(self._configuration)
+        else:
+            overview_layout = _OverviewManualLayout(self._configuration)
+
+        overview_scroll_subwidget.setLayout( overview_layout )
 
         # matches LastFrameVideoCapture output format
         audio_format = PySide6.QtMultimedia.QAudioFormat()
@@ -438,8 +546,8 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
 
         self._live_view_widgets = []        
         self._annotation_widgets = []
-        self._multiview_live_view_widgets = []
-        self._multiview_annotation_widgets = []
+        self._overview_live_view_widgets = []
+        self._overview_annotation_widgets = []
         self._cam_id_to_audio_stream_player_dict = dict()
 
         def on_volume_slider_change( slider_value : int, player : AudioStreamPlayer, live_views : list[LiveView] ):
@@ -466,7 +574,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             live_views.append( live_view_widget )
             self._live_view_widgets.append( live_view_widget )
             self._cams_tab.addTab( live_view_widget, cam_definition.label )
-     
+
             self._annotation_widgets.append(
                 LiveView( 
                     self._configuration,
@@ -476,31 +584,49 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            multiview_cam_widget = LiveView(
+            def scale_initial_pixmap( initial : PySide6.QtGui.QPixmap ) -> PySide6.QtGui.QPixmap:
+                if self._configuration.grid_widget_locs is not None:
+                    widget_location = self._configuration.grid_widget_locs[index]
+                    aspect_ratio = widget_location.width()/widget_location.height()
+                    if aspect_ratio > 1:
+                        size = PySide6.QtCore.QSize( initial.height()*aspect_ratio, initial.height() )
+                    else:
+                        size = PySide6.QtCore.QSize( initial.width(), initial.width()/aspect_ratio )
+
+                    scaled = PySide6.QtGui.QPixmap( size )
+                    scaled.fill( PySide6.QtGui.QColorConstants.Black )
+
+                    with PySide6.QtGui.QPainter( scaled ) as painter:
+                        painter.drawPixmap(
+                            PySide6.QtCore.QPoint(
+                                 scaled.width()/2 - initial.width()/2,
+                                 scaled.height()/2 - initial.height()/2
+                            ), 
+                            initial
+                        )
+                    
+                    return scaled
+                else:
+                    return initial
+
+            overview_cam_widget = LiveView(
                 self._configuration,
                 self._error_handler,
-                initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/disconnected.png"),
+                initial_pixmap=scale_initial_pixmap(PySide6.QtGui.QPixmap("surveillance_ui/disconnected.png")),
                 on_volume_change=on_local_volume_slider_change,
             )
-            live_views.append( multiview_cam_widget )
-            self._multiview_live_view_widgets.append(multiview_cam_widget)
-            row = math.floor(index / self._configuration.grid_column_count)
-            column = index - (row*self._configuration.grid_column_count)
-            multiview_layout.addWidget( multiview_cam_widget, row, column, 1, 1 )
-
-            row += math.ceil( len(self._configuration.cam_definitions) / self._configuration.grid_column_count ) # put annotations below live views
-            multiview_annotation_widget = LiveView(
+            live_views.append( overview_cam_widget )
+            self._overview_live_view_widgets.append(overview_cam_widget)
+            overview_annotation_widget = LiveView(
                 self._configuration,
                 self._error_handler,
-                initial_pixmap=PySide6.QtGui.QPixmap("surveillance_ui/empty.png"),
+                initial_pixmap=scale_initial_pixmap(PySide6.QtGui.QPixmap("surveillance_ui/empty.png")),
             )
-            self._multiview_annotation_widgets.append(multiview_annotation_widget)
-            multiview_layout.addWidget( multiview_annotation_widget, row, column, 1, 1 )
 
-        for i in range( 0, self._configuration.grid_column_count ):
-            multiview_layout.setColumnStretch( i, 1 )
-        for i in range( 0, math.ceil( (len(self._configuration.cam_definitions)+1) / self._configuration.grid_column_count ) ):
-            multiview_layout.setRowStretch( i, 1 )
+            self._overview_annotation_widgets.append(overview_annotation_widget)
+
+        for widget in self._overview_live_view_widgets + self._overview_annotation_widgets:
+            overview_layout.addWidget( widget )
         
         self._cams_tab.addTab( self._ignore_list_view, " 👁🚫 " )
 
@@ -526,7 +652,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         timer.start(10)
 
     def _update_live_view_connection_status( self ):
-        for live_view_widget in self._live_view_widgets + self._multiview_live_view_widgets:
+        for live_view_widget in self._live_view_widgets + self._overview_live_view_widgets:
             live_view_widget.update_connection_status()
 
     def _on_alert_volume_change( self, value : int ) -> None:
@@ -544,7 +670,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             +
             [audio_stream_player.shut_down for audio_stream_player in self._cam_id_to_audio_stream_player_dict.values()]
             +
-            [live_view.shut_down for live_view in (self._live_view_widgets + self._annotation_widgets + self._multiview_live_view_widgets + self._multiview_annotation_widgets)]
+            [live_view.shut_down for live_view in (self._live_view_widgets + self._annotation_widgets + self._overview_live_view_widgets + self._overview_annotation_widgets)]
             +
             [self._history_view.shut_down, self._ignore_list_view.shut_down]
         )
@@ -592,27 +718,21 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         
         pixmap = self._make_pixmap( image_detections_info.frame_info.image )
         index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition(image_detections_info.frame_info.cam_id) )
-        self._set_pixmap( self._annotation_widgets[index], pixmap )
-        self._set_pixmap( self._multiview_annotation_widgets[index], pixmap )
+        self._annotation_widgets[index].setPixmap( pixmap )
+        self._overview_annotation_widgets[index].setPixmap( pixmap )
     
     @graceful_handler
     def _on_frame(self, frame_info : _FrameInfo ) -> None:
-        for cam_definition, live_view_cam_widget, multiview_cam_widget in zip( self._configuration.cam_definitions, self._live_view_widgets, self._multiview_live_view_widgets ):
+        for cam_definition, live_view_cam_widget, overview_cam_widget in zip( self._configuration.cam_definitions, self._live_view_widgets, self._overview_live_view_widgets ):
             if cam_definition.id == frame_info.cam_id:
                 pixmap = self._make_pixmap( frame_info.image )
-                self._set_pixmap( live_view_cam_widget, pixmap )
-                self._set_pixmap( multiview_cam_widget, pixmap )
+                live_view_cam_widget.setPixmap( pixmap )
+                overview_cam_widget.setPixmap( pixmap )
     
     def _make_pixmap(self, frame : numpy.ndarray ):
         q_image = PySide6.QtGui.QImage( frame, frame.shape[1], frame.shape[0], frame.strides[0], PySide6.QtGui.QImage.Format.Format_RGB888)
         return PySide6.QtGui.QPixmap.fromImage(q_image)
     
-    def _set_pixmap(self, widget : LiveView, pixmap : PySide6.QtGui.QPixmap ):
-        previous = widget.pixmap()
-        widget.setPixmap( pixmap )
-        if previous is None or pixmap.size() != previous.size():
-            self._multiview_scroll_area.adjustCamSizes()
-
     def _make_vertical_line(self) -> PySide6.QtWidgets.QFrame:
         retval = PySide6.QtWidgets.QFrame()
         retval.setFrameShape(PySide6.QtWidgets.QFrame.VLine)
