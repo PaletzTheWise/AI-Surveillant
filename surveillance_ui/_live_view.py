@@ -114,7 +114,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
         
         
         if on_volume_change is not None:
-            self._volume_slider, volume_label = make_percentage_slider(self._error_handler, 0)
+            self._volume_slider, volume_label = make_percentage_slider(self._error_handler, 0, disable_mouse_wheel=True)
             set_font_size( volume_label )
             self._volume_slider.valueChanged.connect( on_volume_change )
             icon_label = PySide6.QtWidgets.QLabel(text="🔊 ")
@@ -325,6 +325,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
     @graceful_handler
     def _zoom( self, delta ) -> None:
         self._zoom_level = max( 0, self._zoom_level + delta  )
+        self._focus_image_offset = self._clamp_focus_image_offest( self._focus_image_offset, self._zoom_level )
         self._apply_full_image()
 
     def _widget_pos_to_view_offset( self, widget_position : PySide6.QtCore.QPointF ) -> PySide6.QtCore.QPointF:

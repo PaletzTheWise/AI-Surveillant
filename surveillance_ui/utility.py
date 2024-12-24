@@ -316,8 +316,20 @@ class AudioStreamPlayer:
         self._worker.shutdown()
         self._pool.waitForDone()
 
-def make_percentage_slider( error_handdler : _ErrorHandler, initial_value : int ) -> tuple[PySide6.QtWidgets.QSlider, PySide6.QtWidgets.QLabel]:
-    slider = PySide6.QtWidgets.QSlider( PySide6.QtCore.Qt.Orientation.Horizontal )
+def make_percentage_slider( error_handdler : _ErrorHandler, initial_value : int, disable_mouse_wheel : bool = False ) -> tuple[PySide6.QtWidgets.QSlider, PySide6.QtWidgets.QLabel]:
+    class Slider( PySide6.QtWidgets.QSlider ):
+        _disable_mouse_wheel : bool
+        def __init__( self, disable_mouse_wheel : bool ):
+            super().__init__(PySide6.QtCore.Qt.Orientation.Horizontal)
+            self._disable_mouse_wheel = disable_mouse_wheel
+        
+        def wheelEvent( self, event : PySide6.QtGui.QWheelEvent ) -> None:
+            if self._disable_mouse_wheel:
+                event.ignore()
+            else:
+                super().wheelEvent( event )
+    
+    slider = Slider( disable_mouse_wheel )
     slider.setMinimum(0)
     slider.setMaximum(100)
     slider.setSingleStep(1)
