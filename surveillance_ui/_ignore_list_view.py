@@ -134,7 +134,12 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         
         item = self._ignore_list_widget.currentItem()
         ignore_point = self._get_item_ignore_point(item)
-        image = self._get_cam_image( ignore_point.cam_id )
+        if self._configuration.is_defined_cam( ignore_point.cam_id ):
+            image = self._get_cam_image( ignore_point.cam_id )
+        else:
+            image = PySide6.QtGui.QPixmap(160,90)
+            image.fill( PySide6.QtGui.QColorConstants.Black )
+
         if image.isNull():
             image = PySide6.QtGui.QPixmap( self._PREVIEW_SIZE.x , self._PREVIEW_SIZE.y )
             image.fill( PySide6.QtGui.QColorConstants.Gray )

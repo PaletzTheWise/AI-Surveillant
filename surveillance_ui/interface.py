@@ -59,7 +59,7 @@ class Configuration:
     max_history_entries : int
     detection_logic : DetectionLogic
     grid_column_count : int = 2 
-    grid_widget_locs : list[PySide6.QtCore.QRect] | None = None
+    grid_widget_locs : list[PySide6.QtCore.QRectF] | None = None
     initial_confidence : float = 0.65
     minimum_detection_area : int = 1500
     redetection_delay : datetime.timedelta = datetime.timedelta( seconds=15 )
@@ -82,6 +82,9 @@ class Configuration:
             if interest.coco_class_id == coco_class_id:
                 return interest
         raise ValueError("Unknown coco class ID.")
+    
+    def is_defined_interest( self, interest_id : int ) -> bool:
+        return any( [interest.coco_class_id == interest_id for interest in self.interests] )
     
     def get_disconnect_indicator_delay(self) -> datetime.timedelta:
         '''

@@ -89,14 +89,18 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         return item_widget.user_detection
     
     def _append(self, detection : ObjectDetectionInfo ):
-        interest = self._configuration.get_interest( detection.supervision.coco_class_id )
+        if self._configuration.is_defined_interest( detection.supervision.coco_class_id ):
+            interest_label = self._configuration.get_interest( detection.supervision.coco_class_id ).label
+        else:
+            interest_label = "Unknown"
+        
         if self._configuration.is_defined_cam( detection.cam_id ):
             cam_label = self._configuration.get_cam_definition( detection.cam_id ).label
         else:
             cam_label = "Unknown"
         strings = [
             detection.when.strftime(r"%Y-%m-%d %H:%M:%S"),
-            interest.label,
+            interest_label,
             cam_label,
             str([int(coord) for coord in detection.supervision.xyxy_coords]),
             '%.0f %%' % (detection.supervision.confidence*100)

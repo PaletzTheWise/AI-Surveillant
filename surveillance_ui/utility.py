@@ -69,12 +69,19 @@ class LastFrameVideoCapture:
                     return                
                 input_container = self._input_container_constructor()
                 audio_channel_count = len( input_container.streams.audio )
-                for frame in input_container.decode(audio= 0 if audio_channel_count > 0 else None, video=0):
+                
+                if audio_channel_count > 0:
+                    frame_iterator = input_container.decode( audio=0, video=0 )
+                else:
+                    frame_iterator = input_container.decode( video=0 )
+                
+                for frame in frame_iterator:
                     if self._shutdown_pending:
                         return
                     self._process_frame(frame)
             except av.FFmpegError as e:
                 print( f"Video capture exception: {e}", file=sys.stderr )
+                time.sleep(0.5) # Limit the retry speed so that a misconfigured cam doesn't eat too many resources.
     
     def _process_frame( self, frame : av.video.frame.VideoFrame | av.audio.frame.AudioFrame ) -> None:
         if isinstance( frame, av.video.frame.VideoFrame ):

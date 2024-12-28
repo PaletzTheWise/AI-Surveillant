@@ -137,7 +137,7 @@ class LiveView(PySide6.QtWidgets.QWidget):
 
         self._zoom_level = 0
         self._focus_image_offset = PySide6.QtCore.QPointF()
-        self.setPixmap( initial_pixmap )
+        self.setPixmap( initial_pixmap, is_initial=True )
     
     def shut_down( self ) -> None:
         if self._drag_timer is not None:
@@ -196,8 +196,9 @@ class LiveView(PySide6.QtWidgets.QWidget):
     def pixmap(self) -> PySide6.QtGui.QPixmap:
         return self._fitting_image.pixmap()
     
-    def setPixmap( self, pixmap : PySide6.QtGui.QPixmap ):
-        self._last_frame_time_monotonic = time.monotonic()
+    def setPixmap( self, pixmap : PySide6.QtGui.QPixmap, is_initial : bool = False ):
+        if not is_initial:
+            self._last_frame_time_monotonic = time.monotonic()
         self._full_image = pixmap
         self._apply_full_image()
         self.update_connection_status()

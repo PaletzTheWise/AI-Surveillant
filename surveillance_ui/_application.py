@@ -173,7 +173,7 @@ class _Detector():
                     self._configuration.detection_logic.configure( *values )
                 except queue.Empty:
                     pass
-
+                
                 frame = last_frame_capture.get_latest_frame(timeout=0.01)
                 if frame is None:
                     continue
@@ -339,7 +339,7 @@ class _OverviewManualLayout(PySide6.QtWidgets.QLayout):
     _configuration : Configuration
     _items : list[PySide6.QtWidgets.QLayoutItem]
     _aspect_ratio : PySide6.QtCore.QSize
-    _widget_locations : list[PySide6.QtCore.QRect]
+    _widget_locations : list[PySide6.QtCore.QRectF]
 
     def __init__(self, configuration : Configuration):
         super().__init__()
@@ -357,7 +357,7 @@ class _OverviewManualLayout(PySide6.QtWidgets.QLayout):
 
         if loc_count == cam_count:
             # add another set of widget locations under the existing ones for the annotation widgets
-            self._widget_locations.extend( [PySide6.QtCore.QRect( w.x(), w.y()+row_count, w.width(), w.height() ) for w in self._widget_locations] )
+            self._widget_locations.extend( [PySide6.QtCore.QRectF( w.x(), w.y()+row_count, w.width(), w.height() ) for w in self._widget_locations] )
             row_count *= 2
 
         self._aspect_ratio = PySide6.QtCore.QSize( column_count, row_count )
@@ -384,15 +384,15 @@ class _OverviewManualLayout(PySide6.QtWidgets.QLayout):
     def setGeometry(self, rect: PySide6.QtCore.QRect) -> None:
         magnification = rect.width() / self._aspect_ratio.width()
 
-        def magnify_rectangle( r : PySide6.QtCore.QRect ) -> PySide6.QtCore.QRect:
+        def magnify_rectangle( r : PySide6.QtCore.QRectF ) -> PySide6.QtCore.QRect:
             return PySide6.QtCore.QRect(
                 PySide6.QtCore.QPoint(
-                    math.floor( r.left() * magnification ),
-                    math.floor( r.top() * magnification )
+                    math.floor( round( r.left() * magnification, 2 ) ), # the rounding is to counter floating point imprecision.
+                    math.floor( round( r.top() * magnification, 2 ) )
                 ),
                 PySide6.QtCore.QPoint(
-                    math.floor( (r.right() + 1) * magnification ) - 1,
-                    math.floor( (r.bottom() + 1) * magnification ) - 1
+                    math.floor( round( r.right() * magnification, 2 ) ) - 1,
+                    math.floor( round( r.bottom() * magnification,  2 ) ) - 1,
                 )
             )
         
