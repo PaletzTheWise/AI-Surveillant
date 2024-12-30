@@ -1,6 +1,8 @@
 import typing
 import dataclasses
 import datetime
+import gettext
+import pathlib
 import PySide6.QtCore
 
 if typing.TYPE_CHECKING:
@@ -67,6 +69,7 @@ class Configuration:
     disconnect_indicator_additional_delay : datetime.timedelta = datetime.timedelta( seconds=2 ) # additional to camera_feed_timeout
     use_tcp_transport : bool = True
     max_delay : datetime.timedelta = datetime.timedelta( seconds=3 )
+    language : str = "en"
 
     def get_cam_definition( self, cam_id : int ) -> CamDefinition:
         for cam_definition in self.cam_definitions:
@@ -94,3 +97,9 @@ class Configuration:
         the partial frame could refresh disconnect indicator logic and make the UI look hesitant.
         '''
         return self.camera_feed_timeout + self.disconnect_indicator_additional_delay
+    
+    def get_text( self, message : str ) -> str:
+        if not hasattr(self, "translation"):
+            self.translation = gettext.translation( domain="AISurveillant", localedir="locales", languages=[self.language] )
+
+        return self.translation.gettext( message )

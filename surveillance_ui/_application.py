@@ -9,6 +9,7 @@ import typing
 import functools
 import supervision
 import dataclasses
+import gettext
 from .interface import (
     CamDefinition,
     Configuration,
@@ -104,7 +105,7 @@ class _Detector():
             try:
                 self._detector_process()
             except BaseException as e: # NOSONAR
-                on_uncaught_exception( e, "The detection thread has crashed." )
+                on_uncaught_exception( e, self._configuration.get_text("The detection thread has crashed.") )
 
         self._thread = threading.Thread( target=graceful_detector_process )
         self._thread.daemon = True
@@ -475,16 +476,15 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         
         controls_bar_layout.addWidget( self._make_vertical_line() )
 
-        controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="👁 ") )
+        controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel( text=self._configuration.get_text("Sensitivity: ") ) )
         self._sensitivity_slider, sensitivity_slider_percentage = make_percentage_slider( self._error_handler, int( (1-configuration.initial_confidence) * 100) )
         self._sensitivity_slider.valueChanged.connect( lambda: self._on_configuration_change() )
         controls_bar_layout.addWidget( self._sensitivity_slider )
         controls_bar_layout.addWidget( sensitivity_slider_percentage )
-        controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="👁👁👁") )
 
         controls_bar_layout.addWidget( self._make_vertical_line() )
 
-        controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel(text="🔊 ") )
+        controls_bar_layout.addWidget( PySide6.QtWidgets.QLabel( text=self._configuration.get_text("Alert sound volume: ") ) )
         self._sound_volume_slider, sound_volume_slider_percentage = make_percentage_slider( self._error_handler, 50 )      
         controls_bar_layout.addWidget( self._sound_volume_slider )
         controls_bar_layout.addWidget( sound_volume_slider_percentage )
@@ -498,7 +498,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         self._overview_scroll_area.setHorizontalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded )
         self._overview_scroll_area.setVerticalScrollBarPolicy( PySide6.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn )
         self._overview_scroll_area.setWidgetResizable(True)
-        self._cams_tab.addTab( self._overview_scroll_area, "  *  " )
+        self._cams_tab.addTab( self._overview_scroll_area, self._configuration.get_text("Overview") )
 
         def get_cam_image( cam_id : int ) -> PySide6.QtGui.QImage:
             cam_index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition( cam_id ) )
@@ -514,7 +514,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             error_handler=self._error_handler,
             add_to_ignore=lambda ignore_point: self._ignore_list.add(ignore_point)
         )
-        self._cams_tab.addTab( self._history_view, " !,!,... " )
+        self._cams_tab.addTab( self._history_view, self._configuration.get_text("Detection history") )
 
         overview_scroll_subwidget = PySide6.QtWidgets.QWidget()
         self._overview_scroll_area.setWidget( overview_scroll_subwidget )
@@ -591,7 +591,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         for widget in self._overview_live_view_widgets + self._overview_annotation_widgets:
             overview_layout.addWidget( widget )
         
-        self._cams_tab.addTab( self._ignore_list_view, " 👁🚫 " )
+        self._cams_tab.addTab( self._ignore_list_view, self._configuration.get_text("Ignore list") )
 
         self.setLayout(layout)
 

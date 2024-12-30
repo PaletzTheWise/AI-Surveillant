@@ -89,12 +89,12 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         if self._configuration.is_defined_cam( ignore_point.cam_id ):
             cam_label = self._configuration.get_cam_definition( ignore_point.cam_id ).label
         else:
-            cam_label = "Unrecognized"
+            cam_label = self._configuration.get_text("Undefined id") + f" {ignore_point.cam_id}"
         
         try:
             interest_label = self._configuration.get_interest( ignore_point.coco_class_id ).label
         except ValueError:
-            interest_label = "Unrecognized"
+            interest_label = self._configuration.get_text("Undefined id") + f" {ignore_point.coco_class_id}"
 
         strings = [
             cam_label,

@@ -92,12 +92,12 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         if self._configuration.is_defined_interest( detection.supervision.coco_class_id ):
             interest_label = self._configuration.get_interest( detection.supervision.coco_class_id ).label
         else:
-            interest_label = "Unknown"
+            interest_label = self._configuration.get_text("Undefined id") + f" {detection.supervision.coco_class_id}"
         
         if self._configuration.is_defined_cam( detection.cam_id ):
             cam_label = self._configuration.get_cam_definition( detection.cam_id ).label
         else:
-            cam_label = "Unknown"
+            cam_label = self._configuration.get_text("Undefined id")+ f" {detection.cam_id}"
         strings = [
             detection.when.strftime(r"%Y-%m-%d %H:%M:%S"),
             interest_label,
@@ -109,7 +109,7 @@ class DetectionHistoryView(PySide6.QtWidgets.QFrame):
         item = PySide6.QtWidgets.QTreeWidgetItem( None, strings )
         self._set_item_detection( item, detection )
         self._detection_list_widget.addTopLevelItem(item)
-        button = PySide6.QtWidgets.QPushButton(" 🚫 ")
+        button = PySide6.QtWidgets.QPushButton( self._configuration.get_text("Ignore in future") )
         button.pressed.connect( lambda: self._ignore(detection) )
         self._detection_list_widget.setItemWidget(item, 5, button)
 
