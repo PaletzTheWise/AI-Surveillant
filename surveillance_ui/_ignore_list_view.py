@@ -126,7 +126,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
     
     @graceful_handler
     def _on_current_item_change(self) -> None:
-        if self._ignore_list_widget.currentIndex() is None:
+        if self._ignore_list_widget.currentItem() is None:
             empty_image = PySide6.QtGui.QPixmap(16,9)
             empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
             self._ignore_item_display.setPixmap( empty_image )
