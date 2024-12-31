@@ -572,35 +572,10 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             )
             self._cams_tab.addTab( self._annotation_widgets[-1], cam_definition.label + " ! " )
 
-            def scale_initial_pixmap( initial : PySide6.QtGui.QPixmap ) -> PySide6.QtGui.QPixmap:
-                if self._configuration.grid_widget_locs is not None:
-                    widget_location = self._configuration.grid_widget_locs[index]
-                    aspect_ratio = widget_location.width()/widget_location.height()
-                    if aspect_ratio > 1:
-                        size = PySide6.QtCore.QSize( initial.height()*aspect_ratio, initial.height() )
-                    else:
-                        size = PySide6.QtCore.QSize( initial.width(), initial.width()/aspect_ratio )
-
-                    scaled = PySide6.QtGui.QPixmap( size )
-                    scaled.fill( PySide6.QtGui.QColorConstants.Black )
-
-                    with PySide6.QtGui.QPainter( scaled ) as painter:
-                        painter.drawPixmap(
-                            PySide6.QtCore.QPoint(
-                                 scaled.width()/2 - initial.width()/2,
-                                 scaled.height()/2 - initial.height()/2
-                            ), 
-                            initial
-                        )
-                    
-                    return scaled
-                else:
-                    return initial
-
             overview_cam_widget = LiveView(
                 self._configuration,
                 self._error_handler,
-                initial_pixmap=scale_initial_pixmap(PySide6.QtGui.QPixmap("surveillance_ui/disconnected.png")),
+                initial_pixmap = self._get_initial_pixmap("surveillance_ui/disconnected.png", index),
                 on_volume_change=on_local_volume_slider_change,
             )
             live_views.append( overview_cam_widget )
@@ -608,7 +583,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
             overview_annotation_widget = LiveView(
                 self._configuration,
                 self._error_handler,
-                initial_pixmap=scale_initial_pixmap(PySide6.QtGui.QPixmap("surveillance_ui/empty.png")),
+                initial_pixmap = self._get_initial_pixmap("surveillance_ui/empty.png", index),
             )
 
             self._overview_annotation_widgets.append(overview_annotation_widget)
@@ -639,6 +614,38 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         timer.timeout.connect( self._update_live_view_connection_status )
         timer.start(10)
 
+    def _get_initial_pixmap( self, file_path : str, index : int ) -> PySide6.QtGui.QPixmap:
+        "Get initial pixmap adjusted so that it fits the widget - the icon is the same size on each cam."
+        asset = PySide6.QtGui.QPixmap(file_path)
+        if self._configuration.grid_widget_locs is not None:
+            widget_location = self._configuration.grid_widget_locs[index]
+            window_width = max( [w.right() for w in self._configuration.grid_widget_locs] + [self._configuration.grid_column_count] )
+            scale = 0.5*window_width/widget_location.width() # how much the asset needs to be scaled
+
+            # Scale the pixmap to counter widget on-screen scaling.
+            initial = PySide6.QtGui.QPixmap( asset.width()/scale, asset.width()/scale * widget_location.height()/widget_location.width() )
+            initial.fill( PySide6.QtGui.QColorConstants.Black )
+
+            initial_center = PySide6.QtCore.QPointF( initial.width()/2, initial.height()/2 )
+            with PySide6.QtGui.QPainter( initial ) as painter:
+                painter.drawPixmap(
+                    PySide6.QtCore.QRect(
+                            PySide6.QtCore.QPoint(
+                                initial_center.x() - asset.width()/2,
+                                initial_center.y() - asset.height()/2
+                            ),
+                            PySide6.QtCore.QPoint(
+                                initial_center.x() + asset.width()/2,
+                                initial_center.y() + asset.height()/2
+                            )
+                    ),
+                    asset
+                )
+            
+            return initial
+        else:
+            return asset
+    
     def _update_live_view_connection_status( self ):
         for live_view_widget in self._live_view_widgets + self._overview_live_view_widgets:
             live_view_widget.update_connection_status()
