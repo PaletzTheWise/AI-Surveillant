@@ -2,6 +2,7 @@ import pathlib
 import pathlib
 import json
 import supervision
+import typing
 from .interface import (
     Configuration,
     CamDefinition,
@@ -72,13 +73,13 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
             area = float((xyxy_coords[2]-xyxy_coords[0])*(xyxy_coords[3]-xyxy_coords[1]))
             if ( area < self._configuration.minimum_detection_area
                  or
-                 self._is_ignored( detection.coco_class_id, cam_definition, xyxy_coords=xyxy_coords, frame_size=frame_size) ):
+                 self._is_ignored( detection.interest_id, cam_definition, xyxy_coords=xyxy_coords, frame_size=frame_size) ):
                 continue
             valid_detection_indices.append( index )
         
         return detections[valid_detection_indices]
 
-    def _is_ignored( self, coco_class_id : int, cam_definition : CamDefinition, xyxy_coords : list[float], frame_size : Point2D[int] ) -> bool:
+    def _is_ignored( self, interest_id : int, cam_definition : CamDefinition, xyxy_coords : list[float], frame_size : Point2D[int] ) -> bool:
         """
         Tell whether a detection should be ignored.
 
@@ -92,7 +93,7 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
 
         with self._synchronized_ignore_list.lock() as ignore_list:
             for ignore_point in ignore_list:
-                if ( ignore_point.coco_class_id == coco_class_id 
+                if ( ignore_point.interest_id == interest_id 
                     and
                     ignore_point.cam_id == cam_definition.id
                     and
@@ -108,9 +109,10 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
         try:
             with open( self._IGNORE_FILE, "r") as file:
                 for item in json.load( file ):
+                    item = typing.cast( dict, item)
                     ignore_points.append(
                         IgnorePoint(
-                            coco_class_id = int(item["coco_class_id"]),
+                            interest_id = int(item.get( "interest_id", None) or item.get("coco_class_id", None)),
                             at = Point2D( float(item["x"]), float(item["y"]) ),
                             cam_id = int(item["cam_id"])
                         )
@@ -122,7 +124,7 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
     
     def _ignore_point_to_dict( self, ignore_point : IgnorePoint ) -> dict:
         return {
-            "coco_class_id" : ignore_point.coco_class_id,
+            "interest_id" : ignore_point.interest_id,
             "x" : ignore_point.at.x,
             "y" : ignore_point.at.y,
             "cam_id" : ignore_point.cam_id

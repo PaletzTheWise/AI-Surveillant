@@ -5,6 +5,8 @@ import datetime
 import numpy
 import re
 import pathlib
+import dataclasses
+import uuid
 from .interface import (
     Configuration,
 )
@@ -19,14 +21,28 @@ from .utility import (
 import PIL.Image
 import PIL.ImageQt
 
+@dataclasses.dataclass
+class DetectionUpdate:
+    old : ObjectDetectionInfo
+    new : ObjectDetectionInfo
+
+@dataclasses.dataclass
+class _UpdatableObjectDetectionInfo(ObjectDetectionInfo):
+    original_time : datetime.datetime = dataclasses.field( default_factory=lambda: datetime.datetime.min ) # default is required because the parent class has a default value field
+
+    def __init__( self, detection : ObjectDetectionInfo, original_time : datetime.datetime ):
+        super().__init__( *[getattr(detection,field.name) for field in dataclasses.fields(detection)] )
+        self.original_time = original_time
+
 class DetectionHistory:
     _FOLDER = pathlib.Path("detections/")
 
     _configuration : Configuration
 
-    _detection_list : list[ObjectDetectionInfo]
+    _detection_list : list[_UpdatableObjectDetectionInfo]
     added_dispatcher : EventDispatcher[ObjectDetectionInfo]
     removed_dispatcher : EventDispatcher[ObjectDetectionInfo]
+    updated_dispatcher : EventDispatcher[DetectionUpdate]
 
     def __init__( self,
                   configuration : Configuration ):
@@ -35,30 +51,43 @@ class DetectionHistory:
 
         self.added_dispatcher = EventDispatcher()
         self.removed_dispatcher = EventDispatcher()
+        self.updated_dispatcher = EventDispatcher()
 
         self._detection_list = []
         self._load_saved_detections()
 
-    def add(self, detection : ObjectDetectionInfo, image : numpy.ndarray ) -> bool:
+    def add(self, detection : ObjectDetectionInfo, image : numpy.ndarray, update_of : _UpdatableObjectDetectionInfo = None ) -> bool:
         self._FOLDER.mkdir( exist_ok=True )
 
         pil_image = PIL.Image.fromarray(image, "RGB")
         pil_image.save( self._FOLDER / self._detection_info_to_filename( detection ) )
         
-        self._detection_list.append( detection )
-        self.added_dispatcher.fire( detection )
+        if update_of is not None:
+            old_path = self._FOLDER / self._detection_info_to_filename( update_of )
+            old_path.unlink()
+            updatable_detection = _UpdatableObjectDetectionInfo(detection, original_time=update_of.original_time)
+            self._detection_list[self._detection_list.index(update_of)] = updatable_detection
+            self.updated_dispatcher.fire( DetectionUpdate( old=update_of, new=updatable_detection ) )
+        else:
+            updatable_detection = _UpdatableObjectDetectionInfo( detection, datetime.datetime.now() )
+            self._detection_list.append( updatable_detection )
+            self.added_dispatcher.fire( updatable_detection )
+        
         self._control_length()
         
         return True
 
-    def is_fresh_detection(self, detection : ObjectDetectionInfo) -> bool:
+    def process_detection(self, detection : ObjectDetectionInfo, image : numpy.ndarray) -> bool:
         for existing_detection in self._detection_list:
             if ( detection.cam_id == existing_detection.cam_id
                  and
-                 detection.supervision.coco_class_id == existing_detection.supervision.coco_class_id
+                 detection.supervision.interest_id == existing_detection.supervision.interest_id
                  and
-                 detection.when <= existing_detection.when + self._configuration.redetection_delay ):
+                 detection.when <= existing_detection.original_time + self._configuration.redetection_delay ):
+                if existing_detection.supervision.confidence < detection.supervision.confidence:
+                    self.add( detection=detection, image=image, update_of=existing_detection )
                 return False
+        self.add( detection, image )
         return True
     
     def get_detections(self):
@@ -94,12 +123,12 @@ class DetectionHistory:
         detections.sort( key = lambda x: x.when )
 
         for detection in detections:
-            self._detection_list.append( detection )
+            self._detection_list.append( _UpdatableObjectDetectionInfo( detection=detection, original_time=datetime.datetime.min ) )
         self._control_length()            
 
     def detection_info_from_file( self, filename : str  ) -> "ObjectDetectionInfo | None":
         match : re.Match = re.fullmatch(
-            r"(?P<datetime>\d+-\d+-\d+ \d+-\d+-\d+) coco(?P<coco_class_id>\d+) cam(?P<cam_id>\d+) rect(?P<rectangle_x1>\d+)-(?P<rectangle_y1>\d+)-(?P<rectangle_x2>\d+)-(?P<rectangle_y2>\d+) frame(?P<frame_x>\d+)-(?P<frame_y>\d+) conf(?P<conf>\d+).jpg",
+            r"(?P<datetime>\d+-\d+-\d+ \d+-\d+-\d+) interest(?P<interest_id>\d+) cam(?P<cam_id>\d+) rect(?P<rectangle_x1>\d+)-(?P<rectangle_y1>\d+)-(?P<rectangle_x2>\d+)-(?P<rectangle_y2>\d+) conf(?P<conf>\d+) (?P<guid>[0-9a-f-]+).jpg",
             filename
         )
         if match is None:
@@ -115,26 +144,28 @@ class DetectionHistory:
                 return int(match.group(group_name))
             except ValueError:
                 return None
-        def parse_float(group_name):
-            try:
-                return float(match.group(group_name))
-            except ValueError:
-                return None
 
-        coco_class_id = parse_int("coco_class_id")
+        interest_id = parse_int("interest_id")
         cam_id = parse_int("cam_id")
         confidence_percentage = parse_int("conf")
         xyxy_coords = [parse_int("rectangle_x1"),parse_int("rectangle_y1"),parse_int("rectangle_x2"),parse_int("rectangle_y2")]
-        frame_size = Point2D( x=parse_float("frame_x"), y=parse_float("frame_y"))
-        if any( [item is None for item in [coco_class_id, cam_id, confidence_percentage] + xyxy_coords] ):
+      
+        if any( [item is None for item in [interest_id, cam_id, confidence_percentage] + xyxy_coords] ):
             return None
 
-        sv_detection  = SvDetection( xyxy_coords=xyxy_coords, confidence=confidence_percentage/100, coco_class_id=coco_class_id )
-        
-        return ObjectDetectionInfo( cam_id=cam_id, supervision=sv_detection, when=when, frame_size=frame_size )
+        with PIL.Image.open( self._FOLDER / filename ) as pil_image:
+            frame_size = Point2D( x=pil_image.size[0], y=pil_image.size[1] )
+
+        sv_detection = SvDetection( xyxy_coords=xyxy_coords, confidence=confidence_percentage/100, interest_id=interest_id )
+
+        try:
+            guid = uuid.UUID(hex=match.group("guid"))
+        except ValueError:
+            guid = None
+
+        return ObjectDetectionInfo( cam_id=cam_id, supervision=sv_detection, when=when, frame_size=frame_size, guid=guid )
 
     @staticmethod
     def _detection_info_to_filename(detection : ObjectDetectionInfo) -> pathlib.Path:
         sv_detection = detection.supervision
-        frame_size = detection.frame_size
-        return pathlib.Path(f"{detection.when.strftime(r"%Y-%m-%d %H-%M-%S")} coco{sv_detection.coco_class_id} cam{detection.cam_id} rect{'-'.join([str(int(coord)) for coord in sv_detection.xyxy_coords])} frame{'-'.join([str(int(coord)) for coord in [frame_size.x, frame_size.y]])} conf{'%.0f' % (sv_detection.confidence*100)}.jpg")
+        return pathlib.Path(f"{detection.when.strftime(r"%Y-%m-%d %H-%M-%S")} interest{sv_detection.interest_id} cam{detection.cam_id} rect{'-'.join([str(int(coord)) for coord in sv_detection.xyxy_coords])} conf{'%.0f' % (sv_detection.confidence*100)} {detection.guid}.jpg")

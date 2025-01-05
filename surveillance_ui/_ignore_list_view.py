@@ -46,12 +46,19 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
         self.setLayout(ignore_list_layout)
         self._ignore_list_widget = PySide6.QtWidgets.QTreeWidget()
         self._ignore_list_widget.setSizePolicy( PySide6.QtWidgets.QSizePolicy.Policy.Expanding, PySide6.QtWidgets.QSizePolicy.Policy.Expanding )
-        self._ignore_list_widget.setColumnCount( 4 )
-        self._ignore_list_widget.setHeaderHidden(  True )
+        self._ignore_list_widget.setColumnCount( 3 )
+        self._ignore_list_widget.setHeaderLabels(
+            [
+                self._configuration.get_text("Camera"),
+                self._configuration.get_text("Interest"),
+                " "
+            ]
+        )
         self._ignore_list_widget.setSelectionMode( PySide6.QtWidgets.QListWidget.SelectionMode.SingleSelection )
         self._ignore_list_widget.setSelectionBehavior( PySide6.QtWidgets.QListWidget.SelectionBehavior.SelectRows )
+        self._ignore_list_widget.setFixedWidth( 250 )
         ignore_list_layout.addWidget( self._ignore_list_widget )
-        ignore_list_layout.setStretch( 0, 100)
+        ignore_list_layout.setStretch( 0, 0)
         empty_image = PySide6.QtGui.QPixmap(16,9)
         empty_image.fill( PySide6.QtGui.QColorConstants.Gray )
         self._ignore_item_display = LiveView(
@@ -92,14 +99,13 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
             cam_label = self._configuration.get_text("Undefined id") + f" {ignore_point.cam_id}"
         
         try:
-            interest_label = self._configuration.get_interest( ignore_point.coco_class_id ).label
+            interest_label = self._configuration.get_interest( ignore_point.interest_id ).label
         except ValueError:
-            interest_label = self._configuration.get_text("Undefined id") + f" {ignore_point.coco_class_id}"
+            interest_label = self._configuration.get_text("Undefined id") + f" {ignore_point.interest_id}"
 
         strings = [
             cam_label,
             interest_label,
-            str( [ignore_point.at.x, ignore_point.at.y] )
         ]
         item = PySide6.QtWidgets.QTreeWidgetItem( None, strings )
         self._set_item_ignore_point( item, ignore_point )
@@ -107,7 +113,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
 
         button = PySide6.QtWidgets.QPushButton(" ✖ ")      
         button.pressed.connect( lambda: self._remove_from_model(ignore_point) )
-        self._ignore_list_widget.setItemWidget(item, 3, button)
+        self._ignore_list_widget.setItemWidget(item, 2, button)
 
 
     def _remove(self, removed_ignore_point : IgnorePoint ):
@@ -147,7 +153,7 @@ class IgnoreListView(PySide6.QtWidgets.QFrame):
             scale = min( image.size().width(), image.size().height() ) / min( self._PREVIEW_SIZE.x, self._PREVIEW_SIZE.y )
             scale = max( 1, scale )
             def set_color(color):
-                painter.setPen( PySide6.QtGui.QPen( color, scale ) )    
+                painter.setPen( PySide6.QtGui.QPen( color, scale ) )
             at_screen_point = PySide6.QtCore.QPoint( int(ignore_point.at.x * image.size().width()), int(ignore_point.at.y * image.size().height()) )
             set_color( PySide6.QtGui.QColorConstants.White )
             painter.drawEllipse( at_screen_point, 3*scale, 3*scale )

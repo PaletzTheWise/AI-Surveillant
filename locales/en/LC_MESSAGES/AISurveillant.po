@@ -2,12 +2,12 @@
 # Copyright (C) 2024 THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the PACKAGE package.
 # Automatically generated, 2024.
-#
+# 
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-31 08:29+0100\n"
+"POT-Creation-Date: 2025-01-05 09:46+0100\n"
 "PO-Revision-Date: 2024-12-30 08:00+0100\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -41,12 +41,28 @@ msgstr "Detection history"
 msgid "Ignore list"
 msgstr "Ignore list"
 
-#: surveillance_ui/_history_view.py:95 surveillance_ui/_history_view.py:100
-#: surveillance_ui/_ignore_list_view.py:92
-#: surveillance_ui/_ignore_list_view.py:97
+#: surveillance_ui/_history_view.py:56
+msgid "Date/time"
+msgstr "Date/time"
+
+#: surveillance_ui/_history_view.py:57 surveillance_ui/_ignore_list_view.py:53
+msgid "Interest"
+msgstr "Interest"
+
+#: surveillance_ui/_history_view.py:58 surveillance_ui/_ignore_list_view.py:52
+msgid "Camera"
+msgstr "Camera"
+
+#: surveillance_ui/_history_view.py:59
+msgid "Confidence"
+msgstr "Confidence"
+
+#: surveillance_ui/_history_view.py:106 surveillance_ui/_history_view.py:111
+#: surveillance_ui/_ignore_list_view.py:99
+#: surveillance_ui/_ignore_list_view.py:104
 msgid "Undefined id"
 msgstr "Undefined id"
 
-#: surveillance_ui/_history_view.py:112
+#: surveillance_ui/_history_view.py:123
 msgid "Ignore in future"
 msgstr "Ignore in future"

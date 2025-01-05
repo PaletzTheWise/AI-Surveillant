@@ -47,7 +47,7 @@ if __name__ == '__main__':
         ],
         interests=[
             surveillance_ui.Interest(
-                coco_class_id=0, # id used by the model, usually a COCO class ID
+                interest_id=0, # integer id of the interest as recognized by the model, YoloV9DetectionLogic uses COCO ids.
                 label="Person",
                 enabled_by_default=True,
                 sound_alert_path=None # Path to mp3 you want played for detections of the interest

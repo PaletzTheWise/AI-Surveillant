@@ -39,12 +39,12 @@ class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
         self._model.agnostic = False
         self._model.max_det = 1000
         
-    def configure( self, coco_class_ids : list[int], confidence : float ) -> None:
+    def configure( self, interest_ids : list[int], confidence : float ) -> None:
         self._ensure_model_initialized()
         self._ensure_yolov9_is_on_path()
         from yolov9.models.common import AutoShape
         model = typing.cast( AutoShape, self._model)
-        model.classes = coco_class_ids
+        model.classes = interest_ids
         model.conf = confidence
 
     def detect( self, image : 'numpy.ndarray' ) -> 'supervision.Detections':

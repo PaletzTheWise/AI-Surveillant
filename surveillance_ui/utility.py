@@ -194,8 +194,10 @@ class EventDispatcher(typing.Generic[_T]):
 
     _listeners : list[typing.Callable[[_T],None]]
 
-    def register( self, listener : typing.Callable[[_T],None] ) -> None:
+    def __init__( self ):
         self._listeners = list()
+    
+    def register( self, listener : typing.Callable[[_T],None] ) -> None:
         self._listeners.append( listener )
 
     def forget( self, listener : typing.Callable[[_T],None] ) -> None:

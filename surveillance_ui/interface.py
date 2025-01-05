@@ -2,7 +2,6 @@ import typing
 import dataclasses
 import datetime
 import gettext
-import pathlib
 import PySide6.QtCore
 
 if typing.TYPE_CHECKING:
@@ -19,18 +18,18 @@ class CamDefinition:
 
 @dataclasses.dataclass
 class Interest:
-    coco_class_id : int
+    interest_id : int
     label : str
     enabled_by_default : bool
     sound_alert_path : str
 
 class DetectionLogic(typing.Protocol):
-    def configure( self, coco_class_ids : list[int], confidence : float ) -> None:
+    def configure( self, interest_ids : list[int], confidence : float ) -> None:
         """
         Configure detection parameters.
 
         Parameters:
-            coco_class_ids - list of coco class ids to detect.
+            interest_ids - list of interest ids to detect.
             confidence - minimum confidence level of detection on the scale from 0.0 = none to 1.0 = absolute.
         """
 
@@ -80,14 +79,14 @@ class Configuration:
     def is_defined_cam( self, cam_id : int ) -> bool:
         return any( [cd.id == cam_id for cd in self.cam_definitions] )
     
-    def get_interest( self, coco_class_id : int ) -> Interest:
+    def get_interest( self, interest_id : int ) -> Interest:
         for interest in self.interests:
-            if interest.coco_class_id == coco_class_id:
+            if interest.interest_id == interest_id:
                 return interest
-        raise ValueError("Unknown coco class ID.")
+        raise ValueError("Unknown interest ID.")
     
     def is_defined_interest( self, interest_id : int ) -> bool:
-        return any( [interest.coco_class_id == interest_id for interest in self.interests] )
+        return any( [interest.interest_id == interest_id for interest in self.interests] )
     
     def get_disconnect_indicator_delay(self) -> datetime.timedelta:
         '''

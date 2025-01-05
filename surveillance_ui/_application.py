@@ -161,8 +161,8 @@ class _Detector():
         annotator = supervision.BoundingBoxAnnotator(thickness=5)
         
         default_interests = filter( lambda i: i.enabled_by_default, self._configuration.interests)
-        default_coco_class_ids = [interest.coco_class_id for interest in default_interests]
-        self._configuration.detection_logic.configure( default_coco_class_ids, self._configuration.initial_confidence )
+        default_interest_ids = [interest.interest_id for interest in default_interests]
+        self._configuration.detection_logic.configure( default_interest_ids, self._configuration.initial_confidence )
 
         while True:
             for cam_definition, last_frame_capture in zip( self._configuration.cam_definitions, self._last_frame_captures ):
@@ -213,7 +213,7 @@ class _AlertPlayer:
     def try_alert(self, image_detections_info : _ImageDetectionsInfo ):     
         sounds = []
         for detection in image_detections_info.detections[:5]:
-            interest = self._configuration.get_interest( detection.coco_class_id  )
+            interest = self._configuration.get_interest( detection.interest_id  )
             if interest.sound_alert_path is not None:
                 sounds.append( self.get_sound( interest.sound_alert_path ) )
         cam_definition = self._configuration.get_cam_definition( image_detections_info.frame_info.cam_id )
@@ -459,7 +459,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         self._alert_player = _AlertPlayer( self._configuration, self._error_handler )
         self._alert_player.set_volume( 0.5 )
 
-        self.setMinimumSize( 500, 500 )
+        self.setMinimumSize( 900, 500 )
 
         layout = PySide6.QtWidgets.QVBoxLayout()
 
@@ -683,7 +683,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         classes = []
         for index, interest in enumerate( self._configuration.interests ):
             if self._coco_check_boxes[index].isChecked():
-                classes.append(interest.coco_class_id)
+                classes.append(interest.interest_id)
         
         return classes
     
@@ -699,8 +699,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
         fresh_detections : list[SvDetection] = []
         for detection in image_detections_info.detections:
             single_detection_info = ObjectDetectionInfo( cam_id=image_detections_info.frame_info.cam_id, supervision=detection, when=image_detections_info.when, frame_size=frame_size )
-            if self._history.is_fresh_detection( single_detection_info ):
-                self._history.add( single_detection_info, image=image_detections_info.frame_info.image ) 
+            if self._history.process_detection( detection=single_detection_info, image=image_detections_info.frame_info.image ):
                 fresh_detections.append(detection)
 
         if len(fresh_detections) > 0:
