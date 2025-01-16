@@ -193,8 +193,8 @@ class LiveView(PySide6.QtWidgets.QWidget):
             self._drag_timer.stop()
             self._drag_timer = None
 
-    def pixmap(self) -> PySide6.QtGui.QPixmap:
-        return self._fitting_image.pixmap()
+    def get_full_image(self) -> PySide6.QtGui.QPixmap:
+        return self._full_image
     
     def setPixmap( self, pixmap : PySide6.QtGui.QPixmap, is_initial : bool = False ):
         if not is_initial:

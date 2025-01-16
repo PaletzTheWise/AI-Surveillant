@@ -502,7 +502,7 @@ class SurveillanceWidget(PySide6.QtWidgets.QWidget):
 
         def get_cam_image( cam_id : int ) -> PySide6.QtGui.QImage:
             cam_index = self._configuration.cam_definitions.index( self._configuration.get_cam_definition( cam_id ) )
-            return PySide6.QtGui.QPixmap( self._live_view_widgets[cam_index].pixmap() )
+            return PySide6.QtGui.QPixmap( self._live_view_widgets[cam_index].get_full_image() )
 
         self._ignore_list = IgnoreList( self._configuration )
         self._ignore_list_view = IgnoreListView( self._ignore_list, self._configuration, self._error_handler, get_cam_image )
