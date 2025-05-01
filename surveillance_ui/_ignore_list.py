@@ -110,9 +110,12 @@ class IgnoreList(PySide6.QtWidgets.QFrame):
             with open( self._IGNORE_FILE, "r") as file:
                 for item in json.load( file ):
                     item = typing.cast( dict, item)
+                    for attribute_name in [ "interest_id", "coco_class_id" ]:
+                        if item.get( attribute_name ) != None:
+                            interest_id = int(item.get( attribute_name ))
                     ignore_points.append(
                         IgnorePoint(
-                            interest_id = int(item.get( "interest_id", None) or item.get("coco_class_id", None)),
+                            interest_id = interest_id,
                             at = Point2D( float(item["x"]), float(item["y"]) ),
                             cam_id = int(item["cam_id"])
                         )
