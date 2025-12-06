@@ -138,8 +138,8 @@ class _Detector():
                 timeout=self._configuration.camera_feed_timeout.total_seconds(),
                 options= {
                     'rtsp_transport': 'tcp' if self._configuration.use_tcp_transport else 'udp',
-                    'stimeout' : str(self._configuration.camera_feed_timeout.total_seconds()*pow(10,6)),
-                    'max_delay': str(self._configuration.max_delay.total_seconds()*pow(10,6)),
+                    'stimeout' : str(int(self._configuration.camera_feed_timeout.total_seconds()*pow(10,6))),
+                    'max_delay': str(int(self._configuration.max_delay.total_seconds()*pow(10,6))),
                 },
             )
             if cam_definition.discard_corrupted_frames:
@@ -158,7 +158,7 @@ class _Detector():
         return LastFrameVideoCapture( input_container_constructor, on_frame=on_frame, on_audio_bytes=on_audio_bytes, on_uncaught_exception=on_uncaught_cam_exception )
 
     def _detector_process(self):
-        annotator = supervision.BoundingBoxAnnotator(thickness=5)
+        annotator = supervision.BoxAnnotator(thickness=5)
         
         default_interests = filter( lambda i: i.enabled_by_default, self._configuration.interests)
         default_interest_ids = [interest.interest_id for interest in default_interests]

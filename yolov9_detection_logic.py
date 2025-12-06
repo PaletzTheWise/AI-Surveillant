@@ -104,10 +104,12 @@ class YoloV9Weights(enum.Enum):
 class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
     _model : object
     _weight : YoloV9Weights
+    _force_cpu : bool
 
-    def __init__( self, weight : YoloV9Weights ):
+    def __init__( self, weight : YoloV9Weights, force_cpu : bool = False ):
         self._model = None
         self._weight = weight
+        self._force_cpu = force_cpu
 
     def _ensure_model_initialized(self) -> None:
         import torch
@@ -117,7 +119,7 @@ class YoloV9DetectionLogic(surveillance_ui.DetectionLogic):
         if self._model is not None:
             return
 
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda:0' if torch.cuda.is_available() and not self._force_cpu else 'cpu')
         self._model = AutoShape( DetectMultiBackend( weights=f"yolov9/weights/yolov9-{self._weight.value}-converted.pt", device=device, data='data/coco.yaml', fuse=True) )
         self._model.iou = 0.6 # intersection over union (when to merge overlapping detections into one)
         self._model.agnostic = False
